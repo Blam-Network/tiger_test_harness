@@ -4,10 +4,19 @@ import { BapMessageType } from "./constants";
 export type FrameFlag = 1 | 2;
 
 export interface RawBapMessage {
+  /** Type 100 service_activity header: AH id at +0x18. */
+  activityHostId?: bigint;
   body: Buffer;
   msgType: number;
   sequence: number;
 }
+
+/** Category-6 ah→c header (sub_82E27708). Type@0, seq@2, dest conn@6, AH@0x18. */
+const SERVICE_ACTIVITY_HEADER_SIZE = 0x20;
+const SERVICE_ACTIVITY_CONN_OFF = 0x06;
+const SERVICE_ACTIVITY_AH_OFF = 0x18;
+/** Dest connection 0 = OUT PRIMARY — client relays the inner body as wire 9. */
+const SERVICE_ACTIVITY_DEST_PRIMARY = 0n;
 
 /**
  * BAP TCP frame codec.
@@ -69,15 +78,33 @@ export class BungieCodec {
 
   encode(message: RawBapMessage): Buffer {
     const parts: Buffer[] = [];
-    const header = Buffer.alloc(6);
-    header.writeUInt16BE(message.msgType & 0xffff, 0);
-    header.writeUInt32BE(message.sequence >>> 0, 2);
-    parts.push(header);
+    if (message.msgType === BapMessageType.ActivityHostToClientNotification) {
+      // 32-byte service_activity — not the 6+0x00C8 status header.
+      // A short header makes the client peel 32B into our body and
+      // client_notification_decode sees type 0.
+      const header = Buffer.alloc(SERVICE_ACTIVITY_HEADER_SIZE, 0);
+      header.writeUInt16BE(message.msgType & 0xffff, 0);
+      header.writeUInt32BE(message.sequence >>> 0, 2);
+      header.writeBigUInt64BE(
+        SERVICE_ACTIVITY_DEST_PRIMARY,
+        SERVICE_ACTIVITY_CONN_OFF
+      );
+      header.writeBigUInt64BE(
+        message.activityHostId ?? 0n,
+        SERVICE_ACTIVITY_AH_OFF
+      );
+      parts.push(header);
+    } else {
+      const header = Buffer.alloc(6);
+      header.writeUInt16BE(message.msgType & 0xffff, 0);
+      header.writeUInt32BE(message.sequence >>> 0, 2);
+      parts.push(header);
 
-    if (message.msgType !== BapMessageType.QueuezToClientUpdateNotification) {
-      const trailer = Buffer.alloc(2);
-      trailer.writeUInt16BE(0x00c8, 0);
-      parts.push(trailer);
+      if (usesStatusTrailer(message.msgType)) {
+        const trailer = Buffer.alloc(2);
+        trailer.writeUInt16BE(0x00c8, 0);
+        parts.push(trailer);
+      }
     }
 
     parts.push(message.body);
@@ -144,6 +171,14 @@ class GcmState {
     incrementNonce(this.nonceIn);
     return plain;
   }
+}
+
+function usesStatusTrailer(msgType: number): boolean {
+  return (
+    msgType !== BapMessageType.QueuezToClientUpdateNotification &&
+    msgType !== BapMessageType.BapToClientActivityNotification &&
+    msgType !== BapMessageType.ActivityHostToClientNotification
+  );
 }
 
 function incrementNonce(nonce: Buffer): void {

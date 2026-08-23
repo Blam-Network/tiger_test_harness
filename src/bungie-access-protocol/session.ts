@@ -1,5 +1,15 @@
 import * as crypto from "node:crypto";
 import type * as net from "node:net";
+import {
+  ACTIVITY_HOST_PROXY_IP,
+  ACTIVITY_HOST_PROXY_PORT,
+  buildGetActivityHostProxyResponse,
+  parseGetActivityHostProxyRequest,
+} from "../activity-host-proxy";
+import {
+  ACTIVITY_HOST_NOTIFICATION_VARIANT,
+  parseActivityHostToClientNotification,
+} from "../activity-host-proxy/notification";
 import type ILogger from "../ILogger";
 import {
   buildAccountIdTranslateResponse,
@@ -31,7 +41,7 @@ import {
 } from "./rsat";
 import { parseSubscribeRequest } from "./subscribe";
 
-export class BapSession {
+export class BungieAccessProtocolSession {
   private readonly codec = new BungieCodec();
   private buffer = Buffer.alloc(0);
   private closed = false;
@@ -127,11 +137,17 @@ export class BapSession {
       case BapMessageType.ClientToBapAccountIdTranslationPlatformToInvestmentRequest:
         this.handleAccountIdTranslation(message);
         break;
+      case BapMessageType.ClientToBapGetActivityHostProxyRequest:
+        this.handleGetActivityHostProxy(message);
+        break;
       case BapMessageType.ClientToXetrovNotification:
         this.logger.log(
           `BAP xetrov not absorbed (seq ${message.sequence.toString(16)}, ` +
             `${message.body.length}B, no rsp)`
         );
+        break;
+      case BapMessageType.BapToClientActivityNotification:
+        this.handleRelayedActivityNotification(message);
         break;
       default:
         this.logger.warn(
@@ -254,6 +270,39 @@ export class BapSession {
       BapMessageType.ClientToWorldServerResponse,
       `world-server network-id ${networkId}`
     );
+  }
+
+  private handleGetActivityHostProxy(message: RawBapMessage): void {
+    try {
+      const activityHostId = parseGetActivityHostProxyRequest(message.body);
+      if (activityHostId === null) {
+        this.logger.warn(
+          `BAP get_activity_host_proxy absorbed (short body ${message.body.length}B)`
+        );
+        return;
+      }
+
+      const body = buildGetActivityHostProxyResponse(
+        activityHostId,
+        ACTIVITY_HOST_PROXY_IP,
+        ACTIVITY_HOST_PROXY_PORT
+      );
+      this.send({
+        msgType: BapMessageType.ClientToBapGetActivityHostProxyResponse,
+        sequence: message.sequence,
+        body,
+      });
+      this.logger.log(
+        `BAP get_activity_host_proxy rsp (seq ${message.sequence.toString(16)}, ` +
+          `ah=0x${activityHostId.toString(16)} → ` +
+          `${ACTIVITY_HOST_PROXY_IP}:${ACTIVITY_HOST_PROXY_PORT}, body ${body.length}B)`
+      );
+    } catch (err) {
+      const m = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `BAP get_activity_host_proxy rsp FAILED, absorbed: ${m}`
+      );
+    }
   }
 
   private handleClientConfig(message: RawBapMessage): void {
@@ -386,6 +435,34 @@ export class BapSession {
     this.logger.log(
       `BAP sub rsp (seq ${message.sequence.toString(16)}, ${familyInfo}` +
         `${pushParts.length ? `; pushed ${pushParts.join("; ")}` : "; FIFO ack only"})`
+    );
+  }
+
+  /**
+   * FAH type 100 is dest PRIMARY. The client relays that inner body
+   * here as wire 9; we push the same bytes back so investment delivers
+   * the join result.
+   */
+  private handleRelayedActivityNotification(message: RawBapMessage): void {
+    const parsed = parseActivityHostToClientNotification(message.body);
+    if (!parsed || parsed.variant !== ACTIVITY_HOST_NOTIFICATION_VARIANT) {
+      this.logger.warn(
+        `BAP b->c not ignored (variant ${message.body[0] ?? -1}, ` +
+          `${message.body.length}B)`
+      );
+      return;
+    }
+
+    const seq = this.pushSeq++ >>> 0;
+    this.send({
+      msgType: BapMessageType.BapToClientActivityNotification,
+      sequence: seq,
+      body: message.body,
+    });
+    this.logger.log(
+      `BAP b->c not echo (seq ${seq.toString(16)}, ` +
+        `ah=0x${parsed.sessionId.toString(16)} class=${parsed.kind} ` +
+        `payload ${parsed.payload.length}B)`
     );
   }
 

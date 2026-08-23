@@ -42,6 +42,11 @@ const IGNORED_LOG_SUBSTRINGS = [
   "defrag:gpu",
 ];
 
+/** Always print these, even when the configured level filter would drop them. */
+const ALWAYS_PRINT_SUBSTRINGS = [
+  "world_controller:state_manager: Entering state",
+];
+
 /** @typedef {{ reportsDir: string, logFile?: string, levels?: string[], categories?: string[] }} ReportsWatchConfig */
 
 function loadConfig() {
@@ -169,13 +174,18 @@ class LogTailer {
       if (!entry) {
         continue;
       }
-      if (!this.config.levels.includes(entry.level)) {
-        continue;
-      }
-      if (!categoryAllowed(entry.category, this.config.categories)) {
-        continue;
-      }
       if (IGNORED_LOG_SUBSTRINGS.some((s) => line.includes(s))) {
+        continue;
+      }
+      const alwaysPrint = ALWAYS_PRINT_SUBSTRINGS.some((s) => line.includes(s));
+      if (!(alwaysPrint || this.config.levels.includes(entry.level))) {
+        continue;
+      }
+      if (
+        !(
+          alwaysPrint || categoryAllowed(entry.category, this.config.categories)
+        )
+      ) {
         continue;
       }
       this.printEntry(entry);

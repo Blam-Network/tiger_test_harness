@@ -1,11 +1,19 @@
 export {
+  ACTIVITY_HOST_PROXY_IP,
+  ACTIVITY_HOST_PROXY_PORT,
+  ActivityHostManager,
+  ActivityHostProxyModule,
+  ActivityHostProxyServerService,
+  createActivityHostProxyServer,
+} from "./activity-host-proxy";
+export {
   BAP_SIGNON_IP,
   BAP_SIGNON_PORT,
   BapMessageType,
-  BapModule,
-  BapServerService,
-  createBapServer,
-} from "./bap";
+  BungieAccessProtocolModule,
+  BungieAccessProtocolServerService,
+  createBungieAccessProtocolServer,
+} from "./bungie-access-protocol";
 export { createTigerServer } from "./create-tiger-server";
 export {
   createDatamineServer,

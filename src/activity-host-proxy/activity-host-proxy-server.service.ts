@@ -3,11 +3,11 @@ import { Inject, Injectable } from "@nestjs/common";
 import type ILogger from "../ILogger";
 import { ILoggerSymbol } from "../ILogger";
 import { ShutdownObserver } from "../ShutdownObserver";
-import { BAP_SIGNON_IP, BAP_SIGNON_PORT } from "./config";
-import { BapSession } from "./session";
+import { ACTIVITY_HOST_PROXY_IP, ACTIVITY_HOST_PROXY_PORT } from "./config";
+import { ActivityHostProxySession } from "./session";
 
 @Injectable()
-export class BapServerService {
+export class ActivityHostProxyServerService {
   private server?: net.Server;
 
   constructor(
@@ -16,19 +16,20 @@ export class BapServerService {
   ) {}
 
   listen(opts?: { port?: number; hostname?: string }): Promise<net.Server> {
-    const port = opts?.port ?? BAP_SIGNON_PORT;
-    const hostname = opts?.hostname ?? process.env.HOSTNAME ?? BAP_SIGNON_IP;
+    const port = opts?.port ?? ACTIVITY_HOST_PROXY_PORT;
+    const hostname =
+      opts?.hostname ?? process.env.HOSTNAME ?? ACTIVITY_HOST_PROXY_IP;
 
     return new Promise((resolve, reject) => {
       const server = net.createServer((socket) => {
-        new BapSession(socket, this.logger);
+        new ActivityHostProxySession(socket, this.logger);
       });
 
       server.once("error", reject);
       server.listen(port, hostname, () => {
         this.server = server;
         this.shutdownObserver.addTcpServer(server);
-        this.logger.log(`BAP listening on ${hostname}:${port}`);
+        this.logger.log(`Activity Host Proxy listening on ${hostname}:${port}`);
         resolve(server);
       });
     });

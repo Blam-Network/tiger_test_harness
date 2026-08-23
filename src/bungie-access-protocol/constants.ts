@@ -1,5 +1,31 @@
 /** BAP wire message types. */
 export enum BapMessageType {
+  // off_8395BCE8
+  // client_to_world_server_nondeterministic_request
+  // client_to_world_server_deterministic_request
+  // client_to_activity_host_manager_request
+  // client_to_activity_host_manager_response
+  // bap_to_activity_host_request
+  // bap_to_activity_host_response
+  // activity_host_to_client_notification
+  // activity_host_to_client_log_notification
+  // service_to_world_server_request
+  // bap_to_client_notification
+  // bap_to_client_log_notification
+  // bap_to_client_server_shutdown_notification
+  // client_to_bap_account_id_translation_platform_to_investment_request
+  // client_to_bap_subscription_request
+  // client_to_bap_unsubscribe_request
+  // client_to_bap_client_config_request
+  // client_to_bap_initiate_relay_connection_notification
+  // client_to_activity_host_notification
+  // bap_to_activity_host_notification
+  // client_to_xetrov_notification
+  // client_to_bap_register_secure_address_request
+  // bap_to_activity_host_manager_request
+  // client_to_bap_get_activity_host_proxy_request
+  // client_to_bap_update_purchased_offers_request
+
   ClientToActivityHostManagerRequest = 0x6,
   ClientToActivityHostManagerResponse = 0x7,
   ClientToActivityHostNotification = 0x8,

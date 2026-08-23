@@ -1,5 +1,5 @@
-export { BapModule } from "./bap.module";
-export { BapServerService } from "./bap-server.service";
+export { BungieAccessProtocolModule } from "./bungie-access-protocol.module";
+export { BungieAccessProtocolServerService } from "./bungie-access-protocol-server.service";
 export { BungieCodec } from "./codec";
 export {
   BAP_SECURITY_TOKEN,
@@ -9,4 +9,4 @@ export {
   BAP_SIGNON_PORT,
 } from "./config";
 export { BapMessageType, bapMessageTypeName } from "./constants";
-export { createBapServer } from "./init";
+export { createBungieAccessProtocolServer } from "./init";
