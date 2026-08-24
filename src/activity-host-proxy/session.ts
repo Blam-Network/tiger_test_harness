@@ -14,6 +14,7 @@ import {
 } from "../bungie-access-protocol/constants";
 import type ILogger from "../ILogger";
 import { ActivityHostManager } from "./activity-host-manager";
+import { activityNameForId } from "./activity-id";
 import {
   ActivityHostMessageType,
   activityHostMessageTypeName,
@@ -29,6 +30,7 @@ import {
   buildGlobalActivityStateRsat,
   buildWorldGlobalsStateRsat,
 } from "./rsat";
+import { scenarioClient } from "./scenario-client";
 
 /**
  * TCP session for the activity host proxy.
@@ -269,9 +271,21 @@ export class ActivityHostProxySession {
     if (!this.activityStateSent) {
       this.activityStateSent = true;
       const start = this.activityHostManager.getStartRequest();
+      const activityName =
+        start === undefined ? undefined : activityNameForId(start.activityId);
+      const scenario = activityName ? scenarioClient(activityName) : undefined;
+      if (start && !scenario) {
+        this.logger.warn(
+          `AH proxy no scenario for start activity=${start.activityId}`
+        );
+      }
       const gas = buildGlobalActivityStateRsat({
-        instanceId: sessionId,
+        activityChecksum: scenario?.privateChecksum,
         activityId: start?.activityId,
+        activityName: scenario?.activityName,
+        bubbleCount: scenario?.bubbleCount,
+        familyChecksum: scenario?.familyChecksum,
+        instanceId: sessionId,
       });
       const wgs = buildWorldGlobalsStateRsat();
       this.pushAh(
@@ -279,7 +293,10 @@ export class ActivityHostProxySession {
         ActivityHostMessageType.GlobalActivityState,
         gas,
         `state-refresh → gas ${gas.length}B` +
-          (start ? ` start activity=${start.activityId}` : " start=none")
+          (start ? ` start activity=${start.activityId}` : " start=none") +
+          (scenario
+            ? ` name=${scenario.activityName} bubbles=${scenario.bubbleCount}`
+            : "")
       );
       this.pushAh(
         sessionId,
