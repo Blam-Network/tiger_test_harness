@@ -84,11 +84,11 @@
 | 1 | `0x22358267` |  |
 | 1 | `0x225CF374` |  |
 | 1 | `0x22A31450` |  |
-| 1 | `0x22BFAAE8` |  |
-| 1 | `0x22BFAAE9` |  |
-| 1 | `0x22BFAAEB` |  |
-| 1 | `0x22BFAAEE` |  |
-| 1 | `0x22BFAAEF` |  |
+| 1 | `0x22BFAAE8` | sq_fallen02 |
+| 1 | `0x22BFAAE9` | sq_fallen03 |
+| 1 | `0x22BFAAEB` | sq_fallen01 |
+| 1 | `0x22BFAAEE` | sq_fallen04 |
+| 1 | `0x22BFAAEF` | sq_fallen05 |
 | 1 | `0x234DA975` |  |
 | 1 | `0x234DA976` |  |
 | 1 | `0x2444E3CE` |  |
@@ -96,10 +96,10 @@
 | 1 | `0x26F3A27C` |  |
 | 1 | `0x26F3A27D` |  |
 | 1 | `0x26F3A27F` |  |
-| 1 | `0x272DDAF8` |  |
-| 1 | `0x272DDAF9` |  |
-| 1 | `0x272DDAFA` |  |
-| 1 | `0x272DDAFB` |  |
+| 1 | `0x272DDAF8` | sq_action_mock1 |
+| 1 | `0x272DDAF9` | sq_action_mock0 |
+| 1 | `0x272DDAFA` | sq_action_mock3 |
+| 1 | `0x272DDAFB` | sq_action_mock2 |
 | 1 | `0x29A81AD9` |  |
 | 1 | `0x29A81ADA` |  |
 | 1 | `0x2A9F6914` |  |
@@ -155,7 +155,7 @@
 | 1 | `0x51D4B4FE` |  |
 | 1 | `0x51FB14CF` |  |
 | 1 | `0x5347BBF3` |  |
-| 1 | `0x54917397` |  |
+| 1 | `0x54917397` | sq_pocket01 |
 | 1 | `0x56922EC0` |  |
 | 1 | `0x56922EC1` |  |
 | 1 | `0x56922EC3` |  |
@@ -242,8 +242,8 @@
 | 1 | `0x741DAE17` |  |
 | 1 | `0x74D61A5A` |  |
 | 1 | `0x7537855A` |  |
-| 1 | `0x754F94CD` |  |
-| 1 | `0x754F94CE` |  |
+| 1 | `0x754F94CD` | sq_bridge02 |
+| 1 | `0x754F94CE` | sq_bridge01 |
 | 1 | `0x76F265FD` |  |
 | 1 | `0x7B2472E0` |  |
 | 1 | `0x7B2472E1` |  |
@@ -252,8 +252,8 @@
 | 1 | `0x7D548890` |  |
 | 1 | `0x7D5861DA` |  |
 | 1 | `0x7FCF0F38` |  |
-| 1 | `0x82F3BD2C` |  |
-| 1 | `0x82F3BD2F` |  |
+| 1 | `0x82F3BD2C` | sq_pike01 |
+| 1 | `0x82F3BD2F` | sq_pike02 |
 | 1 | `0x82FCE91E` |  |
 | 1 | `0x83EB53CB` |  |
 | 1 | `0x850B56CE` |  |
@@ -296,8 +296,8 @@
 | 1 | `0xA69C1F83` |  |
 | 1 | `0xAB03DB0D` |  |
 | 1 | `0xAB16513A` |  |
-| 1 | `0xAC89ADFC` |  |
-| 1 | `0xAC89ADFF` |  |
+| 1 | `0xAC89ADFC` | sq_turret02 |
+| 1 | `0xAC89ADFF` | sq_turret01 |
 | 1 | `0xAD0854E9` |  |
 | 1 | `0xAE881014` |  |
 | 1 | `0xAEF7D9C9` |  |
@@ -306,7 +306,7 @@
 | 1 | `0xB0BF9790` |  |
 | 1 | `0xB1923449` |  |
 | 1 | `0xB1F7DE10` |  |
-| 1 | `0xB2225FA2` |  |
+| 1 | `0xB2225FA2` | sq_sniper03 |
 | 1 | `0xB2D51571` |  |
 | 1 | `0xB2D51572` |  |
 | 1 | `0xB4D666F4` |  |
@@ -315,10 +315,10 @@
 | 1 | `0xB5B5421D` |  |
 | 1 | `0xB5B5421E` |  |
 | 1 | `0xB61DEDA5` |  |
-| 1 | `0xB636F779` |  |
-| 1 | `0xB636F77C` |  |
-| 1 | `0xB636F77E` |  |
-| 1 | `0xB636F77F` |  |
+| 1 | `0xB636F779` | sq_dock04 |
+| 1 | `0xB636F77C` | sq_dock01 |
+| 1 | `0xB636F77E` | sq_dock03 |
+| 1 | `0xB636F77F` | sq_dock02 |
 | 1 | `0xB6CFF803` |  |
 | 1 | `0xB732EFE7` |  |
 | 1 | `0xB7CFF9AC` |  |
@@ -326,12 +326,12 @@
 | 1 | `0xBA60D6C1` |  |
 | 1 | `0xBA60D6C2` |  |
 | 1 | `0xBA60D6C3` |  |
-| 1 | `0xBB1846EE` |  |
+| 1 | `0xBB1846EE` | sq_lower01 |
 | 1 | `0xBB60D850` |  |
 | 1 | `0xBB60D851` |  |
 | 1 | `0xBB60D852` |  |
-| 1 | `0xBB83808D` |  |
-| 1 | `0xBB83808E` |  |
+| 1 | `0xBB83808D` | sq_bay01 |
+| 1 | `0xBB83808E` | sq_bay02 |
 | 1 | `0xBB882420` |  |
 | 1 | `0xBB882423` |  |
 | 1 | `0xBC2BA800` |  |
@@ -339,9 +339,9 @@
 | 1 | `0xBC2BA802` |  |
 | 1 | `0xBC2BA807` |  |
 | 1 | `0xBD06763A` |  |
-| 1 | `0xBD24BC39` |  |
-| 1 | `0xBD24BC3A` |  |
-| 1 | `0xBD24BC3B` |  |
+| 1 | `0xBD24BC39` | sq_equipment01 |
+| 1 | `0xBD24BC3A` | sq_equipment02 |
+| 1 | `0xBD24BC3B` | sq_equipment03 |
 | 1 | `0xBED86B0B` |  |
 | 1 | `0xBF0679E0` |  |
 | 1 | `0xBFC0F57E` |  |
@@ -357,7 +357,7 @@
 | 1 | `0xCB5C3578` |  |
 | 1 | `0xCC0D443F` |  |
 | 1 | `0xCD42B97E` |  |
-| 1 | `0xCD56269F` |  |
+| 1 | `0xCD56269F` | sq_fallen_captain |
 | 1 | `0xCD83D0C0` |  |
 | 1 | `0xCF724F5E` |  |
 | 1 | `0xD4BF3261` |  |
@@ -371,15 +371,15 @@
 | 1 | `0xDF5EF429` |  |
 | 1 | `0xDF5EF42A` |  |
 | 1 | `0xDFDE8E28` |  |
-| 1 | `0xE003A276` |  |
-| 1 | `0xE003A277` |  |
-| 1 | `0xE003A278` |  |
-| 1 | `0xE003A279` |  |
-| 1 | `0xE003A27A` |  |
-| 1 | `0xE003A27C` |  |
-| 1 | `0xE003A27D` |  |
-| 1 | `0xE003A27F` |  |
-| 1 | `0xE103A3D1` |  |
+| 1 | `0xE003A276` | sq_strike08 |
+| 1 | `0xE003A277` | sq_strike09 |
+| 1 | `0xE003A278` | sq_strike06 |
+| 1 | `0xE003A279` | sq_strike07 |
+| 1 | `0xE003A27A` | sq_strike04 |
+| 1 | `0xE003A27C` | sq_strike02 |
+| 1 | `0xE003A27D` | sq_strike03 |
+| 1 | `0xE003A27F` | sq_strike01 |
+| 1 | `0xE103A3D1` | sq_strike10 |
 | 1 | `0xE2318B7E` |  |
 | 1 | `0xE507F806` |  |
 | 1 | `0xE509A089` |  |
@@ -402,9 +402,9 @@
 | 1 | `0xEDFBAD63` |  |
 | 1 | `0xEE67DB44` |  |
 | 1 | `0xEE67DB47` |  |
-| 1 | `0xEF81B00C` |  |
-| 1 | `0xEF81B00D` |  |
-| 1 | `0xEF81B00E` |  |
+| 1 | `0xEF81B00C` | sq_control03 |
+| 1 | `0xEF81B00D` | sq_control02 |
+| 1 | `0xEF81B00E` | sq_control01 |
 | 1 | `0xF0E07CAC` |  |
 | 1 | `0xF0E07CAE` |  |
 | 1 | `0xF0E07CAF` |  |
@@ -724,7 +724,7 @@
 | 3 | `0x75DF762C` |  |
 | 3 | `0x7A565910` |  |
 | 3 | `0x7DCC0A47` |  |
-| 3 | `0x7E3518A9` |  |
+| 3 | `0x7E3518A9` | obj_dig_site |
 | 3 | `0x811AE464` |  |
 | 3 | `0x8278029B` |  |
 | 3 | `0x842070D6` |  |
@@ -745,7 +745,7 @@
 | 3 | `0xA1821AAC` |  |
 | 3 | `0xA4FB5FA8` |  |
 | 3 | `0xA5B10D25` |  |
-| 3 | `0xA5D6EE86` |  |
+| 3 | `0xA5D6EE86` | obj_action_mock |
 | 3 | `0xA7CFE2EB` |  |
 | 3 | `0xAD0D7DCD` |  |
 | 3 | `0xAF1B0C7A` |  |
@@ -1033,7 +1033,7 @@
 | 4 | `0x99E46336` |  |
 | 4 | `0x9A5FA0EB` |  |
 | 4 | `0x9A6B33DA` |  |
-| 4 | `0x9AAA64CF` |  |
+| 4 | `0x9AAA64CF` | heavy_ammo |
 | 4 | `0x9AE464A3` |  |
 | 4 | `0x9B4F45CD` |  |
 | 4 | `0x9B5FA214` |  |
@@ -1447,9 +1447,9 @@
 | 12 | `0xC4432CC7` |  |
 | 12 | `0xC45CF5FA` |  |
 | 12 | `0xC5432E70` |  |
-| 13 | `0x1D2AC465` |  |
-| 13 | `0x8EE881AB` |  |
-| 14 | `0xED3CB38B` |  |
+| 13 | `0x1D2AC465` | pvp_future_war_cult |
+| 13 | `0x8EE881AB` | pvp_dead_orbit |
+| 14 | `0xED3CB38B` | team_picker |
 | 15 | `0x021F3833` | scoreboard |
 | 16 | `0xBBCB85BC` | lifetime |
 | 17 | `0x013A5505` |  |
@@ -3014,7 +3014,7 @@
 | 58 | `0xB673150C` |  |
 | 58 | `0xB94D3D5D` |  |
 | 58 | `0xB97F4B3C` |  |
-| 58 | `0xBD26146C` |  |
+| 58 | `0xBD26146C` | pvp_controller |
 | 58 | `0xBD8F9D5F` |  |
 | 58 | `0xBDF4D8E0` |  |
 | 58 | `0xBF9AFC15` |  |
