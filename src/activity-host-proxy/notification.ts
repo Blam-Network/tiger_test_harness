@@ -109,6 +109,8 @@ export function buildJoinResultNotification(
 export function peekJoinRequest(payload: Buffer): {
   nonce: number;
   activityHostId: bigint;
+  machine: Buffer;
+  player: Buffer;
   account: bigint;
   character: bigint;
 } | null {
@@ -119,6 +121,8 @@ export function peekJoinRequest(payload: Buffer): {
   return {
     nonce: parsed.nonce,
     activityHostId: parsed.sessionId,
+    machine: parsed.machine,
+    player: parsed.player,
     account: parsed.account,
     character: parsed.character,
   };

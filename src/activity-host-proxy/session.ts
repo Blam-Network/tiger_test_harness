@@ -15,6 +15,7 @@ import {
 import type ILogger from "../ILogger";
 import { ActivityHostManager } from "./activity-host-manager";
 import { activityNameForId } from "./activity-id";
+import type { AhClientIdentity } from "./join";
 import {
   ActivityHostMessageType,
   activityHostMessageTypeName,
@@ -28,6 +29,7 @@ import {
 } from "./notification";
 import {
   buildGlobalActivityStateRsat,
+  buildReplicateMembershipRsat,
   buildWorldGlobalsStateRsat,
 } from "./rsat";
 import { scenarioClient } from "./scenario-client";
@@ -41,6 +43,8 @@ export class ActivityHostProxySession {
   private closed = false;
   private notifySeq = 0;
   private activityStateSent = false;
+  private membershipSent = false;
+  private joinIdentity: AhClientIdentity | undefined;
   private keepalive: ReturnType<typeof setInterval> | undefined;
 
   private readonly activityHostManager: ActivityHostManager;
@@ -230,6 +234,14 @@ export class ActivityHostProxySession {
 
     try {
       const peek = peekJoinRequest(parsed.payload);
+      if (peek) {
+        this.joinIdentity = {
+          machine: peek.machine,
+          player: peek.player,
+          account: peek.account,
+          character: peek.character,
+        };
+      }
       const body = buildJoinResultNotification(
         parsed.sessionId,
         parsed.payload
@@ -250,6 +262,7 @@ export class ActivityHostProxySession {
             : "") +
           `req ${parsed.payload.length}B rsp ${body.length}B)`
       );
+      this.pushMembership(parsed.sessionId);
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       this.logger.warn(`AH proxy join result FAILED, absorbed: ${m}`);
@@ -268,7 +281,9 @@ export class ActivityHostProxySession {
       );
     }
 
-    if (!this.activityStateSent) {
+    if (this.activityStateSent) {
+      this.pushMembership(sessionId);
+    } else {
       this.activityStateSent = true;
       const start = this.activityHostManager.getStartRequest();
       const activityName =
@@ -304,8 +319,24 @@ export class ActivityHostProxySession {
         wgs,
         `state-refresh → wgs ${wgs.length}B`
       );
+      this.pushMembership(sessionId);
       this.startKeepalive(sessionId);
     }
+  }
+
+  private pushMembership(sessionId: bigint): void {
+    if (this.membershipSent || !this.joinIdentity) {
+      return;
+    }
+    this.membershipSent = true;
+    const mem = buildReplicateMembershipRsat(this.joinIdentity);
+    const machine = this.joinIdentity.machine.toString("hex");
+    this.pushAh(
+      sessionId,
+      ActivityHostMessageType.ReplicateMembership,
+      mem,
+      `membership ${mem.length}B gen=1 slot0 machine=${machine} local-only`
+    );
   }
 
   private pushAh(

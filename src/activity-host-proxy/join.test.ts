@@ -37,6 +37,8 @@ describe("808044F1 join result", () => {
     expect(parsed).toEqual({
       nonce: 0xb1e49c23,
       sessionId: 1n,
+      machine: Buffer.from("aabbccddeeff", "hex"),
+      player: Buffer.from("1122334455667788", "hex"),
       account: 0x100000001n,
       character: 0x200000002n,
     });

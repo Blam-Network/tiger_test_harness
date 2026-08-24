@@ -1,6 +1,6 @@
 import { decode, encode, rsat } from "@blamnetwork/rsat";
 
-const JoinIdentity = rsat.schema(0x808044d3, {
+export const JoinIdentity = rsat.schema(0x808044d3, {
   machine: rsat.bytes(6),
   player: rsat.bytes(8),
   account: rsat.u64(),
@@ -39,9 +39,14 @@ export const JoinResult = rsat.schema(0x808044f1, {
   flag: rsat.u8(),
 });
 
-export interface ParsedJoinRequest {
+export interface AhClientIdentity {
   account: bigint;
   character: bigint;
+  machine: Buffer;
+  player: Buffer;
+}
+
+export interface ParsedJoinRequest extends AhClientIdentity {
   nonce: number;
   sessionId: bigint;
 }
@@ -52,6 +57,8 @@ export function parseJoinRequest(payload: Buffer): ParsedJoinRequest | null {
     return {
       nonce: request.nonce >>> 0,
       sessionId: request.sessionId,
+      machine: Buffer.from(request.identity.machine),
+      player: Buffer.from(request.identity.player),
       account: request.identity.account,
       character: request.identity.character,
     };

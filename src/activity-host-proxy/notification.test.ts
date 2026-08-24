@@ -69,6 +69,8 @@ describe("activity host notification framing", () => {
     expect(peekJoinRequest(request)).toEqual({
       nonce: 0xb1e49c23,
       activityHostId: 1n,
+      machine: Buffer.alloc(6),
+      player: Buffer.alloc(8),
       account: 0x100000001n,
       character: 0x200000002n,
     });

@@ -1,4 +1,9 @@
-import { decode, encode } from "@blamnetwork/rsat";
+import { BitReader, BitWriter, decode, encode } from "@blamnetwork/rsat";
+import type { AhClientIdentity } from "../../join";
+import {
+  MEMBERSHIP_SLOT_COUNT,
+  ReplicateMembership,
+} from "../schemas/membership";
 import {
   BUBBLE_SLOTS,
   GlobalActivityState,
@@ -78,4 +83,52 @@ export function buildWorldGlobalsStateRsat(): Buffer {
 
 export function parseGlobalActivityState(payload: Buffer) {
   return decode(GlobalActivityState, payload);
+}
+
+/**
+ * AH class 11 - Option<808044E0>.
+ * Presence bit is required, see sub_836907E8
+ * No PAH table yet, that is a later Option<808044DD>.
+ */
+export function buildReplicateMembershipRsat(
+  identity: AhClientIdentity,
+  generation = 1
+): Buffer {
+  if (identity.machine.length !== 6) {
+    throw new Error(
+      `membership machine id must be 6 bytes, got ${identity.machine.length}`
+    );
+  }
+  if (identity.player.length !== 8) {
+    throw new Error(
+      `membership player id must be 8 bytes, got ${identity.player.length}`
+    );
+  }
+
+  const emptySlot = { identity: undefined, auth: undefined };
+  const slots = Array.from({ length: MEMBERSHIP_SLOT_COUNT }, (_, i) =>
+    i === 0 ? { identity, auth: undefined } : emptySlot
+  );
+
+  const bw = new BitWriter();
+  bw.writeBit(1);
+  ReplicateMembership.encode(bw, {
+    generation: generation >>> 0,
+    unk: generation >>> 0,
+    clients: { slots },
+    pahRegions: undefined,
+    occupiedMask: 1,
+    machineMask: 1,
+    unkMask: undefined,
+    replicateMask: 0,
+  });
+  return bw.finish();
+}
+
+export function parseReplicateMembership(payload: Buffer) {
+  const br = new BitReader(payload);
+  if (!br.readBit()) {
+    return null;
+  }
+  return ReplicateMembership.decode(br);
 }
