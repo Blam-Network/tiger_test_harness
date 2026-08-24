@@ -22,6 +22,7 @@ export {
   buildFetchFamilyResponseBody,
   buildLoginAccountResponseBody,
   buildLoginAccountResponseBodyFromOpts,
+  buildProfileSetAccountProfileResponseBody,
   buildProfileSetCharacterProfileResponseBody,
   parseFetchFamilyRequest,
 } from "./mocks/messages";

@@ -41,7 +41,12 @@ export const DirectorEnterOrbitResponse = rsat.schema(0x80801a52, {
   serverObject: rsat.nested(ServerObject),
 });
 
-/** 80801ABC — profile_set_character_profile response. */
+/** 80801ABA — profile_set_account_profile response (nid 701). */
+export const ProfileSetAccountProfileResponse = rsat.schema(0x80801aba, {
+  unknown0: rsat.nested(Unknown80801A2B),
+});
+
+/** 80801ABC — profile_set_character_profile response (nid 702). */
 export const ProfileSetCharacterProfileResponse = rsat.schema(0x80801abc, {
   unknown0: rsat.nested(Unknown80801A2B),
 });

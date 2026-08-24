@@ -11,6 +11,7 @@ import {
   FetchFamilyRequest,
   FetchFamilyResponse,
   LoginAccountResponse,
+  ProfileSetAccountProfileResponse,
   ProfileSetCharacterProfileResponse,
 } from "../schemas/messages";
 
@@ -99,6 +100,22 @@ export function buildDirectorEnterOrbitResponseBody(): Buffer {
         unknown3: undefined,
         unknown4: undefined,
       },
+    }
+  );
+}
+
+/**
+ * profile_set_account_profile (nid 701) — SharedDef row 45:
+ * req 80801AB9 (1056B account blob) / rsp 80801ABA (8B).
+ * Zeroed 80801A2B nest is status success, same as nid 702.
+ * A header-only type-11 asserts in server_message:decode.
+ */
+export function buildProfileSetAccountProfileResponseBody(): Buffer {
+  return encodeServerMessage(
+    e_server_message_network_id._server_message_network_id_profile_set_account_profile,
+    ProfileSetAccountProfileResponse,
+    {
+      unknown0: { unknown0: 0, unknown1: 0 },
     }
   );
 }

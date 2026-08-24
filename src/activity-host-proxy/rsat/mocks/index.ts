@@ -2,6 +2,8 @@ import { BitReader, BitWriter, decode, encode } from "@blamnetwork/rsat";
 import type { AhClientIdentity } from "../../join";
 import {
   MEMBERSHIP_SLOT_COUNT,
+  PAH_PEER_SLOT_COUNT,
+  PAH_REGION_COUNT,
   ReplicateMembership,
 } from "../schemas/membership";
 import {
@@ -20,6 +22,7 @@ export interface GlobalActivityStateFields {
   activityId?: number;
   activityName?: string;
   bubbleCount?: number;
+  emptyBubbles?: readonly number[];
   familyChecksum?: number;
   initialBubble?: number;
   initialState?: number;
@@ -47,8 +50,9 @@ export function buildGlobalActivityStateRsat(
 ): Buffer {
   const input = typeof fields === "bigint" ? { instanceId: fields } : fields;
   const bubbleCount = input.bubbleCount ?? 1;
+  const empty = new Set(input.emptyBubbles ?? []);
   const states = Array.from({ length: BUBBLE_SLOTS }, (_, i) =>
-    i < bubbleCount ? 0 : -1
+    i < bubbleCount && !empty.has(i) ? 0 : -1
   );
   return encode(GlobalActivityState, {
     valid: true,
@@ -85,14 +89,91 @@ export function parseGlobalActivityState(payload: Buffer) {
   return decode(GlobalActivityState, payload);
 }
 
+/** 808044C1+1: assign — required before matchmaking-GS is enqueued. */
+const PAH_AMBASSADOR_ASSIGN = 1;
+
+export interface ReplicateMembershipFields {
+  bubbleCount?: number;
+  emptyBubbles?: readonly number[];
+  generation?: number;
+  initialBubble?: number;
+  initialState?: number;
+}
+
+function emptyPahRow(regionId = -1) {
+  return {
+    regionId,
+    unk1: 0,
+    ambassador: {
+      revokeToken: 0,
+      opcode: 0,
+      slot: 0,
+      flag: false,
+    },
+    peerMask: 0,
+    public: {
+      unk0: 0,
+      sessionLock: 0,
+      peerSlots: { markers: Buffer.alloc(PAH_PEER_SLOT_COUNT) },
+      advertised: {
+        session: { bytes: Buffer.alloc(8) },
+        pad: { bytes: Buffer.alloc(36) },
+        activityHost: { bytes: Buffer.alloc(16) },
+      },
+      activityHostId: 0n,
+    },
+  };
+}
+
+function emptyUnknown808044CC() {
+  return { a: 0, b: 0, c: 0, d: 0 };
+}
+
 /**
- * AH class 11 - Option<808044E0>.
- * Presence bit is required, see sub_836907E8
- * No PAH table yet, that is a later Option<808044DD>.
+ * 40 region rows. Unused slots are region_id=-1 so the transition manager
+ * does not walk zeros as forty copies of region 0.
+ */
+function buildPahRegions(
+  bubbleCount: number,
+  initialBubble: number,
+  initialState: number,
+  emptyBubbles: readonly number[] = []
+) {
+  const empty = new Set(emptyBubbles);
+  const rows = Array.from({ length: PAH_REGION_COUNT }, () => emptyPahRow());
+  let i = 0;
+  for (let bubble = 0; bubble < bubbleCount && i < PAH_REGION_COUNT; bubble++) {
+    if (empty.has(bubble)) {
+      continue;
+    }
+    for (let token = 1; token <= 8 && i < PAH_REGION_COUNT; token++) {
+      const row = emptyPahRow(packBubbleStateHandle(bubble, initialState));
+      row.peerMask = 1;
+      row.public.peerSlots.markers[0] = token;
+      if (bubble === initialBubble && token === 1) {
+        row.ambassador.opcode = PAH_AMBASSADOR_ASSIGN;
+      }
+      rows[i++] = row;
+    }
+  }
+  return {
+    table: { rows },
+    unknown0: { a: 0, b: 0, c: 0 },
+    unknown1: {
+      a: 0,
+      left: emptyUnknown808044CC(),
+      right: emptyUnknown808044CC(),
+    },
+  };
+}
+
+/**
+ * AH class 11 Option<808044E0>.
+ * Presence bit is required see sub_836907E8
  */
 export function buildReplicateMembershipRsat(
   identity: AhClientIdentity,
-  generation = 1
+  fields: number | ReplicateMembershipFields = 1
 ): Buffer {
   if (identity.machine.length !== 6) {
     throw new Error(
@@ -105,6 +186,12 @@ export function buildReplicateMembershipRsat(
     );
   }
 
+  const opts = typeof fields === "number" ? { generation: fields } : fields;
+  const generation = (opts.generation ?? 1) >>> 0;
+  const bubbleCount = Math.max(1, opts.bubbleCount ?? 1);
+  const initialBubble = opts.initialBubble ?? 0;
+  const initialState = opts.initialState ?? 0;
+
   const emptySlot = { identity: undefined, auth: undefined };
   const slots = Array.from({ length: MEMBERSHIP_SLOT_COUNT }, (_, i) =>
     i === 0 ? { identity, auth: undefined } : emptySlot
@@ -113,10 +200,15 @@ export function buildReplicateMembershipRsat(
   const bw = new BitWriter();
   bw.writeBit(1);
   ReplicateMembership.encode(bw, {
-    generation: generation >>> 0,
-    unk: generation >>> 0,
+    generation,
+    unk: generation,
     clients: { slots },
-    pahRegions: undefined,
+    pahRegions: buildPahRegions(
+      bubbleCount,
+      initialBubble,
+      initialState,
+      opts.emptyBubbles
+    ),
     occupiedMask: 1,
     machineMask: 1,
     unkMask: undefined,

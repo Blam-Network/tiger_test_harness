@@ -1,4 +1,7 @@
-export type { GlobalActivityStateFields } from "./mocks";
+export type {
+  GlobalActivityStateFields,
+  ReplicateMembershipFields,
+} from "./mocks";
 export {
   buildGlobalActivityStateRsat,
   buildReplicateMembershipRsat,
@@ -11,6 +14,9 @@ export {
   MEMBERSHIP_SLOT_COUNT,
   MembershipSlot,
   MembershipSlots,
+  PAH_REGION_COUNT,
+  PahRegion,
+  PahRegions,
   ReplicateMembership,
 } from "./schemas/membership";
 export {

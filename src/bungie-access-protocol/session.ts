@@ -26,6 +26,7 @@ import {
   buildInspectionBaselineBody,
   buildLoginAccountResponseBody,
   buildPeerBaselineBody,
+  buildProfileSetAccountProfileResponseBody,
   buildProfileSetCharacterProfileResponseBody,
   buildRosterBaselineBody,
   buildSelectCharacterBaselineBody,
@@ -232,6 +233,30 @@ export class BungieAccessProtocolSession {
         const m = err instanceof Error ? err.message : String(err);
         this.logger.warn(
           `BAP director_enter_orbit ack FAILED, absorbed to keep connection alive: ${m}`
+        );
+      }
+      return;
+    }
+
+    if (
+      networkId ===
+      e_server_message_network_id._server_message_network_id_profile_set_account_profile
+    ) {
+      try {
+        const body = buildProfileSetAccountProfileResponseBody();
+        this.send({
+          msgType: BapMessageType.ClientToWorldServerResponse,
+          sequence: message.sequence,
+          body,
+        });
+        this.logger.log(
+          `BAP profile_set_account_profile ack (seq ${message.sequence.toString(16)}, ` +
+            `body ${body.length}B)`
+        );
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        this.logger.warn(
+          `BAP profile_set_account_profile ack FAILED, absorbed to keep connection alive: ${m}`
         );
       }
       return;

@@ -4,12 +4,17 @@
  *   +4  family / package checksum (FNV of the activity symbol)
  *   +8  PRIVATE compare (sub_83612298, ac type 0)
  *   +12 PUBLIC compare
- *   +44 bubbleCount (must match GAS+16)
+ *   +44 bubbleCount (must match Global Activity State +16)
  */
 
 export interface ScenarioClient {
   activityName: string;
   bubbleCount: number;
+  /**
+   * Empty bubbles which have no states.
+   * We track these in the Global Activity State so we can mark them as inaccessible.
+   */
+  emptyBubbles?: readonly number[];
   familyChecksum: number;
   privateChecksum: number;
   publicChecksum: number;
@@ -76,6 +81,8 @@ export const SCENARIO_CLIENTS: Record<string, ScenarioClient> = {
   venus_chapter_2: {
     activityName: "venus_chapter_2",
     bubbleCount: 0x1e,
+    // one of these is jungle
+    emptyBubbles: [11, 15, 20, 22],
     familyChecksum: 0xe2c98505,
     privateChecksum: 0xb412f8d8,
     publicChecksum: 0xf47a9130,

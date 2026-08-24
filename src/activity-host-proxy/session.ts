@@ -43,7 +43,8 @@ export class ActivityHostProxySession {
   private closed = false;
   private notifySeq = 0;
   private activityStateSent = false;
-  private membershipSent = false;
+  private membershipPushes = 0;
+  private membershipGeneration = 0;
   private joinIdentity: AhClientIdentity | undefined;
   private keepalive: ReturnType<typeof setInterval> | undefined;
 
@@ -213,7 +214,8 @@ export class ActivityHostProxySession {
       : `ah_${parsed.kind}`;
     if (
       parsed.kind === ActivityHostMessageType.SendClientHeartbeat ||
-      parsed.kind === ActivityHostMessageType.ActivityClientKeepaliveResponse
+      parsed.kind === ActivityHostMessageType.ActivityClientKeepaliveResponse ||
+      parsed.kind === ActivityHostMessageType.MembershipAcknowledgement
     ) {
       return;
     }
@@ -221,6 +223,25 @@ export class ActivityHostProxySession {
       parsed.kind === ActivityHostMessageType.ActivityClientRequestStateRefresh
     ) {
       this.handleStateRefresh(parsed.sessionId, parsed.payload);
+      return;
+    }
+    if (parsed.kind === ActivityHostMessageType.ClientAuthoritativeDataUpdate) {
+      this.handleClientAuth(parsed.sessionId, parsed.payload);
+      return;
+    }
+    if (parsed.kind === ActivityHostMessageType.PeerLeaveRequest) {
+      this.logger.log(
+        `AH proxy peer_leave absorbed session=0x${parsed.sessionId.toString(16)} ` +
+          `payload=${hexPreview(parsed.payload)}`
+      );
+      return;
+    }
+    if (parsed.kind === ActivityHostMessageType.FreeEntityIndices) {
+      this.handleFreeEntityIndices(parsed.sessionId, parsed.payload);
+      return;
+    }
+    if (parsed.kind === ActivityHostMessageType.AllocateEntityIndices) {
+      this.handleAllocateEntityIndices(parsed.sessionId, parsed.payload);
       return;
     }
     if (parsed.kind !== ActivityHostMessageType.JoinRequest) {
@@ -299,6 +320,7 @@ export class ActivityHostProxySession {
         activityId: start?.activityId,
         activityName: scenario?.activityName,
         bubbleCount: scenario?.bubbleCount,
+        emptyBubbles: scenario?.emptyBubbles,
         familyChecksum: scenario?.familyChecksum,
         instanceId: sessionId,
       });
@@ -324,18 +346,66 @@ export class ActivityHostProxySession {
     }
   }
 
+  private handleClientAuth(sessionId: bigint, payload: Buffer): void {
+    this.logger.log(
+      `AH proxy client-auth ${payload.length}B session=0x${sessionId.toString(16)}`
+    );
+  }
+
+  // TODO: Entity Indices
+  /**
+   * FreeEntityIndices (class 20) happens when world changes.
+   */
+  private handleFreeEntityIndices(sessionId: bigint, payload: Buffer): void {
+    this.activityHostManager.fah.noteEntityIndicesFreed(payload);
+    this.logger.log(
+      `AH proxy free_entity_indices absorbed session=0x${sessionId.toString(16)} ` +
+        `mask=${payload.length}B`
+    );
+  }
+
+  /**
+   * AllocateEntityIndices (class 19), not sure what these are for yet.
+   */
+  private handleAllocateEntityIndices(
+    sessionId: bigint,
+    payload: Buffer
+  ): void {
+    const count = payload.length >= 4 ? payload.readUInt32BE(0) >>> 0 : 0;
+    const { grant, granted, source } =
+      this.activityHostManager.fah.takeAllocateEntityIndexGrant(count);
+    this.pushAh(
+      sessionId,
+      ActivityHostMessageType.EntitySlotsAllocated,
+      grant,
+      `allocate-entity-indices count=${count} granted ${granted} via ${source} ` +
+        `mask ${grant.length}B`
+    );
+  }
+
   private pushMembership(sessionId: bigint): void {
-    if (this.membershipSent || !this.joinIdentity) {
+    if (!this.joinIdentity || this.membershipPushes >= 2) {
       return;
     }
-    this.membershipSent = true;
-    const mem = buildReplicateMembershipRsat(this.joinIdentity);
+    this.membershipPushes += 1;
+    const generation = ++this.membershipGeneration;
+    const start = this.activityHostManager.getStartRequest();
+    const activityName =
+      start === undefined ? undefined : activityNameForId(start.activityId);
+    const scenario = activityName ? scenarioClient(activityName) : undefined;
+    const bubbleCount = scenario?.bubbleCount ?? 1;
+    const mem = buildReplicateMembershipRsat(this.joinIdentity, {
+      bubbleCount,
+      emptyBubbles: scenario?.emptyBubbles,
+      generation,
+    });
     const machine = this.joinIdentity.machine.toString("hex");
     this.pushAh(
       sessionId,
       ActivityHostMessageType.ReplicateMembership,
       mem,
-      `membership ${mem.length}B gen=1 slot0 machine=${machine} local-only`
+      `membership ${mem.length}B gen=${generation} slot0 machine=${machine} ` +
+        `pah bubbles=${bubbleCount} tokens=1..8 local-only`
     );
   }
 
