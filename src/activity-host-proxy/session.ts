@@ -322,6 +322,7 @@ export class ActivityHostProxySession {
         bubbleCount: scenario?.bubbleCount,
         emptyBubbles: scenario?.emptyBubbles,
         familyChecksum: scenario?.familyChecksum,
+        initialBubble: scenario?.initialBubble,
         instanceId: sessionId,
       });
       const wgs = buildWorldGlobalsStateRsat();
@@ -332,7 +333,10 @@ export class ActivityHostProxySession {
         `state-refresh → gas ${gas.length}B` +
           (start ? ` start activity=${start.activityId}` : " start=none") +
           (scenario
-            ? ` name=${scenario.activityName} bubbles=${scenario.bubbleCount}`
+            ? ` name=${scenario.activityName} bubbles=${scenario.bubbleCount}` +
+              (scenario.initialBubble === undefined
+                ? ""
+                : ` slice=${scenario.initialBubble}`)
             : "")
       );
       this.pushAh(
@@ -398,6 +402,7 @@ export class ActivityHostProxySession {
       bubbleCount,
       emptyBubbles: scenario?.emptyBubbles,
       generation,
+      initialBubble: scenario?.initialBubble,
     });
     const machine = this.joinIdentity.machine.toString("hex");
     this.pushAh(
