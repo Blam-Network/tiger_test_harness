@@ -2,6 +2,14 @@ import { describe, expect, it } from "vitest";
 import { ActivityHostService, ENTITY_INDEX_MASK_BYTES } from "./activity-host";
 
 describe("ActivityHostService", () => {
+  it("mints a non-zero id per instance", () => {
+    const a = new ActivityHostService();
+    const b = new ActivityHostService();
+    expect(a.id).not.toBe(0n);
+    expect(b.id).not.toBe(0n);
+    expect(a.id).not.toBe(b.id);
+  });
+
   it("grants class 0 once as a 1536-byte full mask", () => {
     const ah = new ActivityHostService(1n);
     const mask = ah.takeFirstEntityIndexGrant();

@@ -1,3 +1,5 @@
+import * as crypto from "node:crypto";
+
 /**
  * One activity host (FAH or GAH)
  */
@@ -6,11 +8,26 @@ const ENTITY_INDEX_SLOT_COUNT = ENTITY_INDEX_MASK_BYTES * 8;
 const ALLOCATE_ENTITY_INDEX_MAX = 2048;
 const ALLOCATE_ENTITY_INDEX_DEFAULT = 64;
 
+/** Non-zero u64. Client rejects id 0 as `invalid activity host id`. */
+export function randomActivityHostId(): bigint {
+  let id = 0n;
+  while (id === 0n) {
+    id = crypto.randomBytes(8).readBigUInt64BE(0);
+  }
+  return id;
+}
+
 export class ActivityHostService {
+  readonly id: bigint;
   private entityIndexGranted = false;
   private entityIndexFreeMask: Buffer | undefined;
 
-  constructor(readonly id: bigint) {}
+  constructor(id: bigint = randomActivityHostId()) {
+    if (id === 0n) {
+      throw new Error("activity host id must be non-zero");
+    }
+    this.id = id;
+  }
 
   takeFirstEntityIndexGrant(): Buffer | null {
     if (this.entityIndexGranted) {
