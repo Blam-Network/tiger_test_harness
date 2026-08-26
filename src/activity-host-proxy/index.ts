@@ -1,3 +1,4 @@
+export type { ActivityHostKind } from "./activity-host";
 export { ActivityHostManager } from "./activity-host-manager";
 export { ActivityHostProxyModule } from "./activity-host-proxy.module";
 export { ActivityHostProxyServerService } from "./activity-host-proxy-server.service";

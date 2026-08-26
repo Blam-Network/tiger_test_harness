@@ -3,6 +3,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import type ILogger from "../ILogger";
 import { ILoggerSymbol } from "../ILogger";
 import { ShutdownObserver } from "../ShutdownObserver";
+import { ActivityHostManager } from "./activity-host-manager";
 import { ACTIVITY_HOST_PROXY_IP, ACTIVITY_HOST_PROXY_PORT } from "./config";
 import { ActivityHostProxySession } from "./session";
 
@@ -12,7 +13,8 @@ export class ActivityHostProxyServerService {
 
   constructor(
     @Inject(ILoggerSymbol) private readonly logger: ILogger,
-    private readonly shutdownObserver: ShutdownObserver
+    private readonly shutdownObserver: ShutdownObserver,
+    private readonly manager: ActivityHostManager
   ) {}
 
   listen(opts?: { port?: number; hostname?: string }): Promise<net.Server> {
@@ -22,7 +24,7 @@ export class ActivityHostProxyServerService {
 
     return new Promise((resolve, reject) => {
       const server = net.createServer((socket) => {
-        new ActivityHostProxySession(socket, this.logger);
+        new ActivityHostProxySession(socket, this.logger, this.manager);
       });
 
       server.once("error", reject);

@@ -13,6 +13,7 @@ import {
   bapMessageTypeName,
 } from "../bungie-access-protocol/constants";
 import type ILogger from "../ILogger";
+import type { ActivityHostKind } from "./activity-host";
 import { ActivityHostManager } from "./activity-host-manager";
 import { activityNameForId } from "./activity-id";
 import type { AhClientIdentity } from "./join";
@@ -30,7 +31,10 @@ import {
 import {
   buildGlobalActivityStateRsat,
   buildReplicateMembershipRsat,
+  buildSensorAuthTickRsat,
+  buildTowerSensorAuthRsat,
   buildWorldGlobalsStateRsat,
+  playerKeyFromCharacter,
 } from "./rsat";
 import { scenarioClient } from "./scenario-client";
 
@@ -42,21 +46,31 @@ export class ActivityHostProxySession {
   private buffer = Buffer.alloc(0);
   private closed = false;
   private notifySeq = 0;
+  // TOWERSPAWN TODO: Clean these up, move the ones we need into AH
   private activityStateSent = false;
+  private sensorAuthGranted = false;
+  private stateRefreshCount = 0;
+  private towerRepeat = false;
+  private lastTowerBurstAt = 0;
   private membershipPushes = 0;
+  private leftoverAfterFree = false;
   private membershipGeneration = 0;
   private joinIdentity: AhClientIdentity | undefined;
   private keepalive: ReturnType<typeof setInterval> | undefined;
+  // TOWERSPAWN TODO: VERY BAD! DITCH THIS HACK! TERRRIBLE!
+  private activityClockStarted = 0;
 
-  private readonly activityHostManager: ActivityHostManager;
+  // TOWERSPAWN TODO: WHY DOES THE PROXY HAVE A KIND?
+  readonly kind: ActivityHostKind;
 
   constructor(
     private readonly socket: net.Socket,
-    private readonly logger: ILogger
+    private readonly logger: ILogger,
+    private readonly manager: ActivityHostManager
   ) {
-    this.activityHostManager = new ActivityHostManager(logger);
+    this.kind = this.manager.bindSession();
     const remote = `${socket.remoteAddress}:${socket.remotePort}`;
-    this.logger.log(`AH proxy client connected ${remote}`);
+    this.logger.log(`AH proxy client connected ${remote} (${this.kind})`);
 
     socket.on("data", (chunk) => this.onData(chunk));
     socket.on("error", (err) => {
@@ -64,6 +78,7 @@ export class ActivityHostProxySession {
     });
     socket.on("close", () => {
       this.closed = true;
+      this.manager.unbindSession(this.kind);
       this.stopKeepalive();
       this.logger.log(`AH proxy client disconnected ${remote}`);
     });
@@ -188,7 +203,7 @@ export class ActivityHostProxySession {
   }
 
   private handleActivityHostManager(message: RawBapMessage): void {
-    const body = this.activityHostManager.handle(message);
+    const body = this.manager.handle(message, this.kind);
     if (!body) {
       return;
     }
@@ -276,14 +291,17 @@ export class ActivityHostProxySession {
       });
       this.logger.log(
         `AH proxy join result (seq ${seq.toString(16)}, ` +
-          `session=0x${parsed.sessionId.toString(16)} ` +
+          `session=0x${parsed.sessionId.toString(16)}` +
+          ` ${this.kind} ` +
           (peek
             ? `nonce=${peek.nonce} ah=0x${peek.activityHostId.toString(16)} ` +
               `account=${peek.account} character=${peek.character} `
             : "") +
           `req ${parsed.payload.length}B rsp ${body.length}B)`
       );
-      this.pushMembership(parsed.sessionId);
+      // XWS: class 5 is the first write on the join reply. Plaza slice 24
+      // is not enrolled yet, so leftover Some cannot walk live type-1.
+      this.pushJoinFlood(parsed.sessionId);
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       this.logger.warn(`AH proxy join result FAILED, absorbed: ${m}`);
@@ -291,63 +309,88 @@ export class ActivityHostProxySession {
   }
 
   private handleStateRefresh(sessionId: bigint, payload: Buffer): void {
-    // TOOD: this is kindof hacky, update in future.
-    const mask = this.activityHostManager.fah.takeFirstEntityIndexGrant();
-    if (mask) {
-      this.pushAh(
-        sessionId,
-        ActivityHostMessageType.EntitySlotsAllocated,
-        mask,
-        `state-refresh → entity-index req ${payload.length}B mask ${mask.length}B`
-      );
+    if (!this.activityStateSent) {
+      this.pushJoinFlood(sessionId, payload.length);
+      return;
     }
+    this.stateRefreshCount += 1;
+    this.pushEntityIndexGrant(sessionId, payload.length);
+    this.pushMembership(sessionId);
+    if (
+      this.kind === "FAH" &&
+      this.stateRefreshCount >= 2 &&
+      !this.towerRepeat
+    ) {
+      this.towerRepeat = true;
+      this.pushTowerIdentityBurst(sessionId);
+    }
+  }
 
+  /**
+   * Join flood hits MEM-1. MEM-2 spawn auth waits for slice-instantiate
+   * state-refresh, then repeats every 2s (XWS TOWER_SENSOR_AUTH_INTERVAL_MS).
+   */
+  private pushJoinFlood(sessionId: bigint, entityReqBytes = 0): void {
     if (this.activityStateSent) {
-      this.pushMembership(sessionId);
-    } else {
-      this.activityStateSent = true;
-      const start = this.activityHostManager.getStartRequest();
-      const activityName =
-        start === undefined ? undefined : activityNameForId(start.activityId);
-      const scenario = activityName ? scenarioClient(activityName) : undefined;
-      if (start && !scenario) {
-        this.logger.warn(
-          `AH proxy no scenario for start activity=${start.activityId}`
-        );
-      }
-      const gas = buildGlobalActivityStateRsat({
-        activityChecksum: scenario?.privateChecksum,
-        activityId: start?.activityId,
-        activityName: scenario?.activityName,
-        bubbleCount: scenario?.bubbleCount,
-        emptyBubbles: scenario?.emptyBubbles,
-        familyChecksum: scenario?.familyChecksum,
-        initialBubble: scenario?.initialBubble,
-        instanceId: sessionId,
-      });
-      const wgs = buildWorldGlobalsStateRsat();
-      this.pushAh(
-        sessionId,
-        ActivityHostMessageType.GlobalActivityState,
-        gas,
-        `state-refresh → gas ${gas.length}B` +
-          (start ? ` start activity=${start.activityId}` : " start=none") +
-          (scenario
-            ? ` name=${scenario.activityName} bubbles=${scenario.bubbleCount}` +
-              (scenario.initialBubble === undefined
-                ? ""
-                : ` slice=${scenario.initialBubble}`)
-            : "")
-      );
-      this.pushAh(
-        sessionId,
-        ActivityHostMessageType.WorldGlobalsState,
-        wgs,
-        `state-refresh → wgs ${wgs.length}B`
-      );
-      this.pushMembership(sessionId);
-      this.startKeepalive(sessionId);
+      return;
     }
+    this.activityStateSent = true;
+    const start = this.manager.getStartRequest();
+    const activityName =
+      start === undefined ? undefined : activityNameForId(start.activityId);
+    const scenario = activityName ? scenarioClient(activityName) : undefined;
+    if (start && !scenario) {
+      this.logger.warn(
+        `AH proxy no scenario for start activity=${start.activityId}`
+      );
+    }
+    this.pushJoinSensorAuth(sessionId);
+    this.pushEntityIndexGrant(sessionId, entityReqBytes);
+    this.pushMembership(sessionId);
+    const gas = buildGlobalActivityStateRsat({
+      activityChecksum: scenario?.privateChecksum,
+      activityId: start?.activityId,
+      activityName: scenario?.activityName,
+      bubbleCount: scenario?.bubbleCount,
+      emptyBubbles: scenario?.emptyBubbles,
+      familyChecksum: scenario?.familyChecksum,
+      initialBubble: scenario?.initialBubble,
+      instanceId: sessionId,
+    });
+    const wgs = buildWorldGlobalsStateRsat();
+    this.pushAh(
+      sessionId,
+      ActivityHostMessageType.GlobalActivityState,
+      gas,
+      `join-flood → gas ${gas.length}B` +
+        (start ? ` start activity=${start.activityId}` : " start=none") +
+        (scenario
+          ? ` name=${scenario.activityName} bubbles=${scenario.bubbleCount}` +
+            (scenario.initialBubble === undefined
+              ? ""
+              : ` slice=${scenario.initialBubble}`)
+          : "")
+    );
+    this.pushAh(
+      sessionId,
+      ActivityHostMessageType.WorldGlobalsState,
+      wgs,
+      `join-flood → wgs ${wgs.length}B`
+    );
+    this.startKeepalive(sessionId);
+  }
+
+  private pushEntityIndexGrant(sessionId: bigint, reqBytes: number): void {
+    const mask = this.manager.host(this.kind).takeFirstEntityIndexGrant();
+    if (!mask) {
+      return;
+    }
+    this.pushAh(
+      sessionId,
+      ActivityHostMessageType.EntitySlotsAllocated,
+      mask,
+      `entity-index req ${reqBytes}B mask ${mask.length}B`
+    );
   }
 
   private handleClientAuth(sessionId: bigint, payload: Buffer): void {
@@ -361,11 +404,18 @@ export class ActivityHostProxySession {
    * FreeEntityIndices (class 20) happens when world changes.
    */
   private handleFreeEntityIndices(sessionId: bigint, payload: Buffer): void {
-    this.activityHostManager.fah.noteEntityIndicesFreed(payload);
+    this.manager.host(this.kind).noteEntityIndicesFreed(payload);
     this.logger.log(
       `AH proxy free_entity_indices absorbed session=0x${sessionId.toString(16)} ` +
         `mask=${payload.length}B`
     );
+    // Slice-8 type-1 is gone; plaza type-1 is not enrolled yet. One
+    // leftover Some here is the last safe window (join leftovers die
+    // with this world).
+    if (this.kind === "FAH" && !this.leftoverAfterFree) {
+      this.leftoverAfterFree = true;
+      this.pushLeftoverBind(sessionId);
+    }
   }
 
   /**
@@ -376,8 +426,9 @@ export class ActivityHostProxySession {
     payload: Buffer
   ): void {
     const count = payload.length >= 4 ? payload.readUInt32BE(0) >>> 0 : 0;
-    const { grant, granted, source } =
-      this.activityHostManager.fah.takeAllocateEntityIndexGrant(count);
+    const { grant, granted, source } = this.manager
+      .host(this.kind)
+      .takeAllocateEntityIndexGrant(count);
     this.pushAh(
       sessionId,
       ActivityHostMessageType.EntitySlotsAllocated,
@@ -387,13 +438,97 @@ export class ActivityHostProxySession {
     );
   }
 
+  private activityTicks(): number {
+    if (!this.activityClockStarted) {
+      this.activityClockStarted = Date.now();
+    }
+    return Math.floor((Date.now() - this.activityClockStarted) / (1000 / 30));
+  }
+
+  private towerAuthOpts() {
+    const start = this.manager.getStartRequest();
+    const activityName =
+      start === undefined ? undefined : activityNameForId(start.activityId);
+    return {
+      activityTime: this.activityTicks(),
+      authorityMachine: this.joinIdentity?.machine,
+      playerKey: playerKeyFromCharacter(this.joinIdentity?.character),
+      scenario: activityName ? scenarioClient(activityName) : undefined,
+    };
+  }
+
+  private pushLeftoverBind(sessionId: bigint): void {
+    const opts = this.towerAuthOpts();
+    const rsat = buildTowerSensorAuthRsat({
+      ...opts,
+      grantTable: false,
+      includeLeftovers: true,
+      includeType1: false,
+    });
+    this.pushAh(
+      sessionId,
+      ActivityHostMessageType.SensorAuthUpdate,
+      rsat,
+      `sensor-auth ${rsat.length}B ${this.kind} spawn=tower leftover bind hasAuth=0`
+    );
+  }
+
+  private pushTowerIdentityBurst(sessionId: bigint): void {
+    const opts = this.towerAuthOpts();
+    const rsat = buildTowerSensorAuthRsat({
+      ...opts,
+      grantTable: false,
+      includeLeftovers: true,
+      includeType1: true,
+    });
+    this.pushAh(
+      sessionId,
+      ActivityHostMessageType.SensorAuthUpdate,
+      rsat,
+      `sensor-auth ${rsat.length}B ${this.kind} spawn=tower leftover+all-type1 hasAuth=0`
+    );
+    this.lastTowerBurstAt = Date.now();
+  }
+
+  private pushJoinSensorAuth(sessionId: bigint): void {
+    this.pushLeftoverBind(sessionId);
+    if (this.kind !== "FAH" || this.sensorAuthGranted) {
+      return;
+    }
+    const opts = this.towerAuthOpts();
+    const grant = buildTowerSensorAuthRsat({
+      ...opts,
+      grantTable: true,
+      includeLeftovers: false,
+      includeType1: true,
+    });
+    const bubbles = opts.scenario?.bubbleCount ?? 5;
+    this.pushAh(
+      sessionId,
+      ActivityHostMessageType.SensorAuthUpdate,
+      grant,
+      `sensor-auth ${grant.length}B ${this.kind} spawn=tower identity grant 0..${bubbles - 1}+64`
+    );
+    this.sensorAuthGranted = true;
+  }
+
+  private pushSensorAuthTick(sessionId: bigint): void {
+    const rsat = buildSensorAuthTickRsat(this.activityTicks());
+    this.pushAh(
+      sessionId,
+      ActivityHostMessageType.SensorAuthUpdate,
+      rsat,
+      `sensor-auth ${rsat.length}B ${this.kind} tick`
+    );
+  }
+
   private pushMembership(sessionId: bigint): void {
-    if (!this.joinIdentity || this.membershipPushes >= 2) {
+    if (!this.joinIdentity || this.membershipPushes >= 1) {
       return;
     }
     this.membershipPushes += 1;
     const generation = ++this.membershipGeneration;
-    const start = this.activityHostManager.getStartRequest();
+    const start = this.manager.getStartRequest();
     const activityName =
       start === undefined ? undefined : activityNameForId(start.activityId);
     const scenario = activityName ? scenarioClient(activityName) : undefined;
@@ -444,6 +579,15 @@ export class ActivityHostProxySession {
         this.stopKeepalive();
         return;
       }
+      if (
+        this.kind === "FAH" &&
+        this.towerRepeat &&
+        Date.now() - this.lastTowerBurstAt >= 2000
+      ) {
+        this.pushTowerIdentityBurst(sessionId);
+      } else {
+        this.pushSensorAuthTick(sessionId);
+      }
       this.pushAh(
         sessionId,
         ActivityHostMessageType.ActivityClientKeepaliveRequest,
@@ -451,7 +595,6 @@ export class ActivityHostProxySession {
         "keepalive"
       );
     };
-    beat();
     this.keepalive = setInterval(beat, 1000);
   }
 

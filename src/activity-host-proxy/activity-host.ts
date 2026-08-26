@@ -1,7 +1,9 @@
 import * as crypto from "node:crypto";
 
+export type ActivityHostKind = "FAH" | "GAH";
+
 /**
- * One activity host (FAH or GAH)
+ * One activity host (FAH or GAH).
  */
 export const ENTITY_INDEX_MASK_BYTES = 1536;
 const ENTITY_INDEX_SLOT_COUNT = ENTITY_INDEX_MASK_BYTES * 8;

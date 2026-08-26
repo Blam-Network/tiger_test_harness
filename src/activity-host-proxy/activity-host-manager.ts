@@ -1,8 +1,10 @@
 import { c } from "@craftycodie/cstruct";
+import { Inject, Injectable } from "@nestjs/common";
 import type { RawBapMessage } from "../bungie-access-protocol/codec";
 import type ILogger from "../ILogger";
-import { ActivityHostService } from "./activity-host";
-import { FAKE_ACTIVITY_HOST_ID } from "./config";
+import { ILoggerSymbol } from "../ILogger";
+import { type ActivityHostKind, ActivityHostService } from "./activity-host";
+import { formatActivityHostTag } from "./config";
 import {
   formatStartRequest,
   type ParsedStartRequest,
@@ -14,11 +16,10 @@ export const ACTIVITY_HOST_MANAGER_START_TYPE = 3;
 // TODO: what is this
 export const ACTIVITY_HOST_MANAGER_RESPONSE_TYPE = 2;
 
-// TODO: figure out the body after the id.
 const ActivityHostManagerResponse = c.struct({
   type: c.u8(),
   activityHostId: c.u64(),
-  _unknown: c.pad(128),
+  session: c.String(128),
 });
 
 export function parseActivityHostManagerRequest(body: Buffer): {
@@ -42,29 +43,50 @@ export function buildActivityHostManagerResponse(
     {
       type: ACTIVITY_HOST_MANAGER_RESPONSE_TYPE,
       activityHostId,
+      session: formatActivityHostTag(activityHostId),
     },
     "big"
   );
 }
 
-// Currently one TCP session gets one manager.
-// in future, there will be shared managers handling multiple sessions.
-// or maybe a single manager managing all AHs across all sessions
-// well figure this out later.
+@Injectable()
 export class ActivityHostManager {
-  readonly fah: ActivityHostService;
+  readonly fah = new ActivityHostService();
   gah: ActivityHostService | undefined;
+  private fahBound = false;
   private startRequest: ParsedStartRequest | undefined;
 
-  constructor(private readonly logger: ILogger) {
-    this.fah = new ActivityHostService(FAKE_ACTIVITY_HOST_ID);
+  constructor(@Inject(ILoggerSymbol) private readonly logger: ILogger) {}
+
+  bindSession(): ActivityHostKind {
+    if (!this.fahBound) {
+      this.fahBound = true;
+      return "FAH";
+    }
+    this.ensureGah();
+    return "GAH";
+  }
+
+  unbindSession(kind: ActivityHostKind): void {
+    if (kind === "FAH") {
+      this.fahBound = false;
+    }
+  }
+
+  ensureGah(): ActivityHostService {
+    this.gah ??= new ActivityHostService();
+    return this.gah;
+  }
+
+  host(kind: ActivityHostKind): ActivityHostService {
+    return kind === "GAH" ? this.ensureGah() : this.fah;
   }
 
   getStartRequest(): ParsedStartRequest | undefined {
     return this.startRequest;
   }
 
-  handle(message: RawBapMessage): Buffer | null {
+  handle(message: RawBapMessage, kind: ActivityHostKind): Buffer | null {
     try {
       const req = parseActivityHostManagerRequest(message.body);
       if (!req) {
@@ -90,12 +112,13 @@ export class ActivityHostManager {
         }
       }
 
-      const body = buildActivityHostManagerResponse(this.fah.id);
+      const host = this.host(kind);
+      const body = buildActivityHostManagerResponse(host.id);
       this.logger.log(
         `AH manager rsp (seq ${message.sequence.toString(16)}, ` +
           `reqType=${req.type} req=${message.body.length}B ` +
           `head=${hexPreview(req.payload, 16)} ` +
-          `ah=0x${this.fah.id.toString(16)}, body ${body.length}B)`
+          `ah=0x${host.id.toString(16)} ${kind}, body ${body.length}B)`
       );
       return body;
     } catch (err) {

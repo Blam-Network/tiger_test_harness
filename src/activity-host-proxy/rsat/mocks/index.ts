@@ -224,3 +224,46 @@ export function parseReplicateMembership(payload: Buffer) {
   }
   return ReplicateMembership.decode(br);
 }
+
+export type {
+  FinishedBits,
+  SensorAuthSenseEntry,
+  SensorAuthUpdateFields,
+  SensorClientRefFields,
+} from "./sensor-auth";
+export {
+  BOULEVARD_BUNDLE,
+  buildSensorAuthTickRsat,
+  buildSensorAuthUpdateRsat,
+  // TOWERSPAWN TODO: Clean this up - do we need a function for each bundle?
+  buildTowerBinderSenseEntries,
+  buildTowerIdentitySenseEntries,
+  buildTowerLeftoverSenseEntries,
+  buildTowerSensorAuthRsat,
+  buildTowerSpawnSenseEntries,
+  encodeFireteamAuth,
+  encodeHardWipeGlobalsAuth,
+  encodeLifetimeAuth,
+  encodeObjectAuth,
+  encodeObjectFilterAuth,
+  encodePlayerAuth,
+  encodePlayerObjectiveAuth,
+  encodeSafeZoneAuth,
+  encodeScoreboardAuth,
+  encodeSensorClientRef,
+  encodeSquadAuth,
+  encodeSquadSense,
+  encodeTimerAuth,
+  HUB_BUNDLE,
+  LIFETIME_STATE_SPAWN_READY,
+  MILITARY_BUNDLE,
+  playerKeyFromCharacter,
+  SLICE_BUNDLE,
+  SPAWN_BUNDLE,
+  SPAWN_LIFETIME_INDEX,
+  SPAWN_OCCUPIED_PLAYER_INDEX,
+  SPAWN_PLAYER_INDICES,
+  TOWER_TYPE1_BANKS,
+  TOWER_TYPE1_COUNTS,
+  UNDERWATCH_BUNDLE,
+} from "./sensor-auth";
