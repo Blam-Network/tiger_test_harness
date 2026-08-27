@@ -458,24 +458,6 @@ export class ActivityHostProxySession {
   }
 
   /**
-   * Alpha leftover bind: Lifetime + Player + leftover Some, no Squad.
-   * 4786 leftovers have to land before plaza enrolls.
-   */
-  private pushLeftoverBind(sessionId: bigint): void {
-    const opts = this.towerAuthOpts();
-    const rsat = buildTowerSensorAuthRsat({
-      ...opts,
-      leftoverBind: true,
-    });
-    this.pushAh(
-      sessionId,
-      ActivityHostMessageType.SensorAuthUpdate,
-      rsat,
-      `sensor-auth ${rsat.length}B ${this.kind} spawn=tower leftover bind hasAuth=0`
-    );
-  }
-
-  /**
    * State-refresh apply: identity + every social squad + leftover Some.
    * hasAuth=0. Retail 10800 is thinner; Alpha spawn gates need this bank.
    */
@@ -494,10 +476,9 @@ export class ActivityHostProxySession {
   }
 
   /**
-   * Join: leftover bind first, then grant — Lifetime + Player, hasAuth=1.
+   * Join grant (retail 261): Lifetime + Player on 4786, hasAuth=1.
    */
   private pushJoinSensorAuth(sessionId: bigint): void {
-    this.pushLeftoverBind(sessionId);
     if (this.kind !== "FAH" || this.sensorAuthGranted) {
       return;
     }

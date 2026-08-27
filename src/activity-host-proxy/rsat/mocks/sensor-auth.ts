@@ -841,19 +841,10 @@ export function buildTowerSensorAuthRsat(opts: {
   scenario?: ScenarioClient;
   /** Join grant: hasAuth=1 + Lifetime/Player. Apply: hasAuth=0 + identity/squads/leftovers. */
   grantTable?: boolean;
-  /** Join leftover bind: hasAuth=0 + identity + leftover Some, no Squad. */
-  leftoverBind?: boolean;
   promoteSeq?: number;
 }): Buffer {
   const grant = opts.grantTable === true;
-  const leftoverBind = opts.leftoverBind === true;
   const playerKey = opts.playerKey ?? playerKeyFromCharacter();
-  let senseEntries = buildTowerApplySenseEntries(playerKey);
-  if (grant) {
-    senseEntries = buildTowerBinderSenseEntries(playerKey);
-  } else if (leftoverBind) {
-    senseEntries = buildTowerSpawnSenseEntries(playerKey, true, false);
-  }
   return buildSensorAuthUpdateRsat({
     activityTime: opts.activityTime,
     authorityMachine: opts.authorityMachine,
@@ -861,6 +852,8 @@ export function buildTowerSensorAuthRsat(opts: {
     emptyBubbles: opts.scenario?.emptyBubbles,
     hasAuthorityTable: grant,
     promoteSeq: opts.promoteSeq,
-    senseEntries,
+    senseEntries: grant
+      ? buildTowerBinderSenseEntries(playerKey)
+      : buildTowerApplySenseEntries(playerKey),
   });
 }
