@@ -43,3 +43,5 @@ reports_watch.json
 /title_storage
 
 src/generated/prisma/
+
+/packets/

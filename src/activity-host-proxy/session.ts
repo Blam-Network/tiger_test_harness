@@ -49,9 +49,6 @@ export class ActivityHostProxySession {
   // TOWERSPAWN TODO: Clean these up, move the ones we need into AH
   private activityStateSent = false;
   private sensorAuthGranted = false;
-  private stateRefreshCount = 0;
-  private towerRepeat = false;
-  private lastTowerBurstAt = 0;
   private membershipPushes = 0;
   private leftoverAfterFree = false;
   private membershipGeneration = 0;
@@ -229,6 +226,7 @@ export class ActivityHostProxySession {
       : `ah_${parsed.kind}`;
     if (
       parsed.kind === ActivityHostMessageType.SendClientHeartbeat ||
+      parsed.kind === ActivityHostMessageType.ActivityClientKeepaliveRequest ||
       parsed.kind === ActivityHostMessageType.ActivityClientKeepaliveResponse ||
       parsed.kind === ActivityHostMessageType.MembershipAcknowledgement
     ) {
@@ -301,36 +299,31 @@ export class ActivityHostProxySession {
       );
       // XWS: class 5 is the first write on the join reply. Plaza slice 24
       // is not enrolled yet, so leftover Some cannot walk live type-1.
-      this.pushJoinFlood(parsed.sessionId);
+      this.pushJoinState(parsed.sessionId);
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
       this.logger.warn(`AH proxy join result FAILED, absorbed: ${m}`);
     }
   }
 
+  // state refresh triggers bulk of sensor auth
   private handleStateRefresh(sessionId: bigint, payload: Buffer): void {
-    if (!this.activityStateSent) {
-      this.pushJoinFlood(sessionId, payload.length);
-      return;
+    if (this.activityStateSent) {
+      this.pushEntityIndexGrant(sessionId);
+      this.pushMembership(sessionId);
+    } else {
+      this.pushJoinState(sessionId);
     }
-    this.stateRefreshCount += 1;
-    this.pushEntityIndexGrant(sessionId, payload.length);
-    this.pushMembership(sessionId);
-    if (
-      this.kind === "FAH" &&
-      this.stateRefreshCount >= 2 &&
-      !this.towerRepeat
-    ) {
-      this.towerRepeat = true;
-      this.pushTowerIdentityBurst(sessionId);
+    if (this.kind === "FAH") {
+      this.pushSensorAuthApply(sessionId);
     }
   }
 
   /**
-   * Join flood hits MEM-1. MEM-2 spawn auth waits for slice-instantiate
-   * state-refresh, then repeats every 2s (XWS TOWER_SENSOR_AUTH_INTERVAL_MS).
+   * First host state after join-result: grant, entity-index, membership,
+   * GAS, WGS. Full SensorAuth apply waits for state-refresh.
    */
-  private pushJoinFlood(sessionId: bigint, entityReqBytes = 0): void {
+  private pushJoinState(sessionId: bigint): void {
     if (this.activityStateSent) {
       return;
     }
@@ -345,7 +338,7 @@ export class ActivityHostProxySession {
       );
     }
     this.pushJoinSensorAuth(sessionId);
-    this.pushEntityIndexGrant(sessionId, entityReqBytes);
+    this.pushEntityIndexGrant(sessionId);
     this.pushMembership(sessionId);
     const gas = buildGlobalActivityStateRsat({
       activityChecksum: scenario?.privateChecksum,
@@ -362,7 +355,7 @@ export class ActivityHostProxySession {
       sessionId,
       ActivityHostMessageType.GlobalActivityState,
       gas,
-      `join-flood → gas ${gas.length}B` +
+      `join-state → gas ${gas.length}B` +
         (start ? ` start activity=${start.activityId}` : " start=none") +
         (scenario
           ? ` name=${scenario.activityName} bubbles=${scenario.bubbleCount}` +
@@ -375,12 +368,12 @@ export class ActivityHostProxySession {
       sessionId,
       ActivityHostMessageType.WorldGlobalsState,
       wgs,
-      `join-flood → wgs ${wgs.length}B`
+      `join-state → wgs ${wgs.length}B`
     );
     this.startKeepalive(sessionId);
   }
 
-  private pushEntityIndexGrant(sessionId: bigint, reqBytes: number): void {
+  private pushEntityIndexGrant(sessionId: bigint): void {
     const mask = this.manager.host(this.kind).takeFirstEntityIndexGrant();
     if (!mask) {
       return;
@@ -389,7 +382,7 @@ export class ActivityHostProxySession {
       sessionId,
       ActivityHostMessageType.EntitySlotsAllocated,
       mask,
-      `entity-index req ${reqBytes}B mask ${mask.length}B`
+      `entity-index mask ${mask.length}B`
     );
   }
 
@@ -457,6 +450,11 @@ export class ActivityHostProxySession {
     };
   }
 
+  /**
+   * Lifetime + Player, plus spawn/hub Scoreboard, HardWipeGlobals, Timer,
+   * Fireteam, SafeZone, ObjectFilter, PlayerObjective, Object, and plaza
+   * Actor as None. No Squad. hasAuth=0.
+   */
   private pushLeftoverBind(sessionId: bigint): void {
     const opts = this.towerAuthOpts();
     const rsat = buildTowerSensorAuthRsat({
@@ -473,7 +471,12 @@ export class ActivityHostProxySession {
     );
   }
 
-  private pushTowerIdentityBurst(sessionId: bigint): void {
+  /**
+   * State-refresh apply: Lifetime + Player + Squad (plaza / boulevard /
+   * military / underwatch) + the same spawn/hub items as leftover bind.
+   * hasAuth=0.
+   */
+  private pushSensorAuthApply(sessionId: bigint): void {
     const opts = this.towerAuthOpts();
     const rsat = buildTowerSensorAuthRsat({
       ...opts,
@@ -485,11 +488,14 @@ export class ActivityHostProxySession {
       sessionId,
       ActivityHostMessageType.SensorAuthUpdate,
       rsat,
-      `sensor-auth ${rsat.length}B ${this.kind} spawn=tower leftover+all-type1 hasAuth=0`
+      `sensor-auth ${rsat.length}B ${this.kind} spawn=tower apply hasAuth=0`
     );
-    this.lastTowerBurstAt = Date.now();
   }
 
+  /**
+   * Join: leftover bind first, then grant — Lifetime + Player + Squad,
+   * hasAuth=1, no spawn/hub session objects.
+   */
   private pushJoinSensorAuth(sessionId: bigint): void {
     this.pushLeftoverBind(sessionId);
     if (this.kind !== "FAH" || this.sensorAuthGranted) {
@@ -512,6 +518,7 @@ export class ActivityHostProxySession {
     this.sensorAuthGranted = true;
   }
 
+  /** Idle tick: activity time only, no bundle items. */
   private pushSensorAuthTick(sessionId: bigint): void {
     const rsat = buildSensorAuthTickRsat(this.activityTicks());
     this.pushAh(
@@ -579,23 +586,9 @@ export class ActivityHostProxySession {
         this.stopKeepalive();
         return;
       }
-      if (
-        this.kind === "FAH" &&
-        this.towerRepeat &&
-        Date.now() - this.lastTowerBurstAt >= 2000
-      ) {
-        this.pushTowerIdentityBurst(sessionId);
-      } else {
-        this.pushSensorAuthTick(sessionId);
-      }
-      this.pushAh(
-        sessionId,
-        ActivityHostMessageType.ActivityClientKeepaliveRequest,
-        Buffer.alloc(1, 0),
-        "keepalive"
-      );
+      this.pushSensorAuthTick(sessionId);
     };
-    this.keepalive = setInterval(beat, 1000);
+    this.keepalive = setInterval(beat, 3000);
   }
 
   private stopKeepalive(): void {
