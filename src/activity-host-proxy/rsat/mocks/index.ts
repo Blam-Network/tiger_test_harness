@@ -39,6 +39,38 @@ export function packBubbleStateHandle(bubble: number, state = 0): number {
   return ((bubble & 0b0011_1111) << 3) | (state & 0b0000_0111);
 }
 
+export function unpackBubbleStateHandle(handle: number): {
+  bubble: number;
+  state: number;
+} {
+  return {
+    bubble: (handle >>> 3) & 0b0011_1111,
+    state: handle & 0b0000_0111,
+  };
+}
+
+/**
+ * Class-17 refresh is 8 bytes. First dword is the destination bubble:
+ * a raw index, or a packed handle. All-zero means "no hint".
+ */
+export function parseStateRefreshSlice(
+  payload: Buffer,
+  bubbleCount: number
+): number | undefined {
+  if (payload.length < 4 || payload.every((byte) => byte === 0)) {
+    return;
+  }
+  const word = payload.readUInt32BE(0);
+  if (word < bubbleCount) {
+    return word;
+  }
+  if (word >>> 9) {
+    return;
+  }
+  const { bubble } = unpackBubbleStateHandle(word);
+  return bubble < bubbleCount ? bubble : undefined;
+}
+
 function activityNameChars(name: string | undefined): number[] {
   const chars = new Array(256).fill(0);
   if (!name) {
@@ -239,39 +271,11 @@ export type {
   SensorClientRefFields,
 } from "./sensor-auth";
 export {
-  BOULEVARD_BUNDLE,
   buildSensorAuthTickRsat,
   buildSensorAuthUpdateRsat,
-  // TOWERSPAWN TODO: Clean this up - do we need a function for each bundle?
   buildTowerApplySenseEntries,
   buildTowerBinderSenseEntries,
-  buildTowerIdentitySenseEntries,
   buildTowerLeftoverSenseEntries,
   buildTowerSensorAuthRsat,
-  buildTowerSpawnSenseEntries,
-  encodeFireteamAuth,
-  encodeHardWipeGlobalsAuth,
-  encodeLifetimeAuth,
-  encodeObjectAuth,
-  encodeObjectFilterAuth,
-  encodePlayerAuth,
-  encodePlayerObjectiveAuth,
-  encodeSafeZoneAuth,
-  encodeScoreboardAuth,
-  encodeSensorClientRef,
-  encodeSquadAuth,
-  encodeSquadSense,
-  encodeTimerAuth,
-  HUB_BUNDLE,
-  LIFETIME_STATE_SPAWN_READY,
-  MILITARY_BUNDLE,
   playerKeyFromCharacter,
-  SLICE_BUNDLE,
-  SPAWN_BUNDLE,
-  SPAWN_LIFETIME_INDEX,
-  SPAWN_OCCUPIED_PLAYER_INDEX,
-  SPAWN_PLAYER_INDICES,
-  TOWER_TYPE1_BANKS,
-  TOWER_TYPE1_COUNTS,
-  UNDERWATCH_BUNDLE,
 } from "./sensor-auth";

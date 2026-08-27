@@ -4,8 +4,10 @@ import {
   buildGlobalActivityStateRsat,
   buildReplicateMembershipRsat,
   buildWorldGlobalsStateRsat,
+  packBubbleStateHandle,
   parseGlobalActivityState,
   parseReplicateMembership,
+  parseStateRefreshSlice,
   WorldGlobalsState,
 } from "./rsat";
 
@@ -78,6 +80,20 @@ describe("activity state RSAT", () => {
     expect(rows?.[0]?.ambassador.opcode).toBe(1);
     expect(rows?.[7]?.public.peerSlots.markers[0]).toBe(8);
     expect(rows?.[8]?.regionId).toBe(-1);
+  });
+
+  it("parses a class-17 refresh destination bubble", () => {
+    const raw = Buffer.alloc(8);
+    raw.writeUInt32BE(0, 0);
+    expect(parseStateRefreshSlice(raw, 5)).toBeUndefined();
+    raw.writeUInt32BE(3, 0);
+    expect(parseStateRefreshSlice(raw, 5)).toBe(3);
+    raw.writeUInt32BE(0, 0);
+    raw.writeUInt32BE(1, 4);
+    expect(parseStateRefreshSlice(raw, 5)).toBe(0);
+    const packed = Buffer.alloc(8);
+    packed.writeUInt32BE(packBubbleStateHandle(3), 0);
+    expect(parseStateRefreshSlice(packed, 5)).toBe(3);
   });
 
   it("covers each bubble × tokens 1..8 in the PAH table", () => {

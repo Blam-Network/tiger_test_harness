@@ -34,6 +34,7 @@ import {
   buildSensorAuthTickRsat,
   buildTowerSensorAuthRsat,
   buildWorldGlobalsStateRsat,
+  parseStateRefreshSlice,
   playerKeyFromCharacter,
 } from "./rsat";
 import { scenarioClient } from "./scenario-client";
@@ -55,6 +56,7 @@ export class ActivityHostProxySession {
   private keepalive: ReturnType<typeof setInterval> | undefined;
   // in-world time
   private activityClockStarted = 0;
+  private currentSlice: number | undefined;
 
   // TOWERSPAWN TODO: WHY DOES THE PROXY HAVE A KIND?
   readonly kind: ActivityHostKind;
@@ -241,6 +243,17 @@ export class ActivityHostProxySession {
       this.handleClientAuth(parsed.sessionId, parsed.payload);
       return;
     }
+    if (
+      parsed.kind === ActivityHostMessageType.AbandonEntitySlots ||
+      parsed.kind === ActivityHostMessageType.AbdicateAuthority ||
+      parsed.kind === ActivityHostMessageType.RequestPurgeEntitySlots
+    ) {
+      this.logger.log(
+        `AH proxy ${kindName} absorbed session=0x${parsed.sessionId.toString(16)} ` +
+          `payload=${hexPreview(parsed.payload)}`
+      );
+      return;
+    }
     if (parsed.kind === ActivityHostMessageType.PeerLeaveRequest) {
       this.logger.log(
         `AH proxy peer_leave absorbed session=0x${parsed.sessionId.toString(16)} ` +
@@ -304,13 +317,32 @@ export class ActivityHostProxySession {
   }
 
   /**
-   * Retail: first refresh is GAS + WGS + fat SensorAuth (hub/plaza/military).
-   * Join already sent the identity grant.
+   * Retail: first refresh is GAS + WGS + SensorAuth for the live slice.
+   * Join already sent the identity grant. Later refreshes carry the
+   * destination bubble; we re-bind PAH to that slice.
    */
   private handleStateRefresh(sessionId: bigint, payload: Buffer): void {
+    const opts = this.towerAuthOpts();
+    const bubbleCount = opts.scenario?.bubbleCount ?? 5;
+    if (this.currentSlice === undefined) {
+      this.currentSlice = opts.scenario?.initialBubble ?? 0;
+    }
+    const hinted = parseStateRefreshSlice(payload, bubbleCount);
+    const previousSlice =
+      hinted !== undefined && hinted !== this.currentSlice
+        ? this.currentSlice
+        : undefined;
+    if (hinted !== undefined) {
+      this.currentSlice = hinted;
+    }
+    this.logger.log(
+      `AH proxy state-refresh slice=${this.currentSlice}` +
+        (previousSlice === undefined ? "" : ` from=${previousSlice}`) +
+        ` hint=${hinted ?? "none"} payload=${hexPreview(payload)}`
+    );
     if (this.activityStateSent) {
       this.pushEntityIndexGrant(sessionId);
-      this.pushMembership(sessionId);
+      this.pushMembership(sessionId, previousSlice !== undefined);
     } else {
       this.pushJoinState(sessionId);
     }
@@ -338,6 +370,7 @@ export class ActivityHostProxySession {
         `AH proxy no scenario for start activity=${start.activityId}`
       );
     }
+    this.currentSlice ??= scenario?.initialBubble ?? 0;
     this.pushJoinSensorAuth(sessionId);
     this.pushEntityIndexGrant(sessionId);
     this.pushMembership(sessionId);
@@ -458,20 +491,23 @@ export class ActivityHostProxySession {
   }
 
   /**
-   * State-refresh apply: identity + every social squad + leftover Some.
-   * hasAuth=0. Retail 10800 is thinner; Alpha spawn gates need this bank.
+   * State-refresh apply: identity + current-slice squads + leftover Some.
+   * hasAuth=0. Do not None the previous slice's type-1.
    */
   private pushSensorAuthApply(sessionId: bigint): void {
     const opts = this.towerAuthOpts();
+    const slice = this.currentSlice ?? opts.scenario?.initialBubble ?? 0;
     const rsat = buildTowerSensorAuthRsat({
       ...opts,
       grantTable: false,
+      slice,
     });
     this.pushAh(
       sessionId,
       ActivityHostMessageType.SensorAuthUpdate,
       rsat,
-      `sensor-auth ${rsat.length}B ${this.kind} spawn=tower apply hasAuth=0`
+      `sensor-auth ${rsat.length}B ${this.kind} spawn=tower apply hasAuth=0 ` +
+        `slice=${slice}`
     );
   }
 
@@ -508,8 +544,8 @@ export class ActivityHostProxySession {
     );
   }
 
-  private pushMembership(sessionId: bigint): void {
-    if (!this.joinIdentity || this.membershipPushes >= 1) {
+  private pushMembership(sessionId: bigint, force = false): void {
+    if (!this.joinIdentity || (!force && this.membershipPushes >= 1)) {
       return;
     }
     this.membershipPushes += 1;
@@ -523,7 +559,7 @@ export class ActivityHostProxySession {
       bubbleCount,
       emptyBubbles: scenario?.emptyBubbles,
       generation,
-      initialBubble: scenario?.initialBubble,
+      initialBubble: this.currentSlice ?? scenario?.initialBubble,
     });
     const machine = this.joinIdentity.machine.toString("hex");
     this.pushAh(
@@ -531,7 +567,8 @@ export class ActivityHostProxySession {
       ActivityHostMessageType.ReplicateMembership,
       mem,
       `membership ${mem.length}B gen=${generation} slot0 machine=${machine} ` +
-        `pah bubbles=${bubbleCount} tokens=1..8 local-only`
+        `pah bubbles=${bubbleCount} slice=${this.currentSlice ?? scenario?.initialBubble} ` +
+        "tokens=1..8 local-only"
     );
   }
 

@@ -99,3 +99,34 @@ export const ACTIVITY_BUNDLE_TAGS: readonly ActivityBundleTag[] = [
   t80a8a008_action_mock_4786c0e0,
   t80a8a00a_action_mock_eaaf16e2,
 ];
+
+/**
+ * Hardcoded (activity, slice) → 80800533 bundle hash. Same hash can
+ * appear on other activities; lookup is name + hash.
+ *
+ * Tower slices are 0-indexed in scenario order. Slice 1 (`ch12_outro`)
+ * has no 80800533 table.
+ */
+export const ACTIVITY_SLICE_BUNDLE_HASHES: Readonly<
+  Record<string, Readonly<Record<number, number>>>
+> = {
+  city_tower_default1: {
+    0: t809e2009_city_tower_default1_8d3f1166.bundle, // boulevard
+    2: t809e200a_city_tower_default1_19d43443.bundle, // military
+    3: t809e200b_city_tower_default1_8cc31436.bundle, // plaza
+    4: t809e200c_city_tower_default1_aa891b91.bundle, // underwatch
+  },
+};
+
+export function activityBundleForSlice(
+  activityName: string,
+  slice: number
+): ActivityBundleTag | undefined {
+  const hash = ACTIVITY_SLICE_BUNDLE_HASHES[activityName]?.[slice];
+  if (hash === undefined) {
+    return;
+  }
+  return ACTIVITY_BUNDLE_TAGS.find(
+    (tag) => tag.activityName === activityName && tag.bundle === hash
+  );
+}

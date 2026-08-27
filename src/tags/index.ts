@@ -16,6 +16,11 @@ import { tag as venusPortal1Fah } from "./scenario_fah/809B8008_venus_portal_1_s
 import { tag as cityTowerDefault1Fah } from "./scenario_fah/809E2004_city_tower_default1_scenario_fah";
 import type { ScenarioClientTag, ScenarioFahTag } from "./types";
 
+export {
+  ACTIVITY_BUNDLE_TAGS,
+  ACTIVITY_SLICE_BUNDLE_HASHES,
+  activityBundleForSlice,
+} from "./activity_bundle";
 export { ACTIVITY_ID_NAMES } from "./package_entry/808018BE_package_entry";
 export type { ScenarioClientTag, ScenarioFahTag } from "./types";
 
