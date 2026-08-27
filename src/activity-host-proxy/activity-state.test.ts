@@ -19,6 +19,7 @@ describe("activity state RSAT", () => {
     expect(parsed.bubbleCount).toBe(1);
     expect(parsed.world.valid).toBe(true);
     expect(parsed.world.handles.handles).toEqual([]);
+    expect(parsed.world.worldServerTime).toBe(1500n);
   });
 
   it("marks Venus empty bubbles inaccessible in GAS", () => {

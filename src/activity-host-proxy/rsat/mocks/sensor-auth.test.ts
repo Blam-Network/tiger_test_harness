@@ -9,6 +9,8 @@ import {
 } from "../schemas/sensor";
 import {
   buildSensorAuthTickRsat,
+  buildTowerApplySenseEntries,
+  buildTowerBinderSenseEntries,
   buildTowerLeftoverSenseEntries,
   buildTowerSensorAuthRsat,
   buildTowerSpawnSenseEntries,
@@ -101,17 +103,36 @@ describe("SensorAuth RSAT", () => {
     expect(encodePlayerObjectiveAuth().bitCount).toBe(2617);
   });
 
-  it("grant packet is identity + every social type-1 bank", () => {
+  it("join grant is Lifetime + Player on 4786 only", () => {
     const key = playerKeyFromCharacter(0x200000002n);
-    const entries = buildTowerSpawnSenseEntries(key);
+    const entries = buildTowerBinderSenseEntries(key);
     expect(entries[0]?.clientRef).toEqual({
       bundle: SPAWN_BUNDLE,
       typeId: ActivityBundleItemType.Lifetime,
       typeIndex: SPAWN_LIFETIME_INDEX,
     });
     expect(senseEntryPayloadBits(entries[0]!).length).toBe(2 + 106);
-    expect(entries).toHaveLength(17 + TOWER_TYPE1_ROW_COUNT);
-    expect(TOWER_TYPE1_COUNTS.get(2)).toBe(2);
+    expect(entries).toHaveLength(17);
+    expect(entries.every((e) => e.clientRef.bundle === SPAWN_BUNDLE)).toBe(
+      true
+    );
+    expect(
+      entries.some((e) => e.clientRef.typeId === ActivityBundleItemType.Squad)
+    ).toBe(false);
+    expect(
+      entries.some((e) => e.clientRef.typeId === ActivityBundleItemType.Actor)
+    ).toBe(false);
+  });
+
+  it("apply is identity + every social squad + leftover Some", () => {
+    const key = playerKeyFromCharacter(0x200000002n);
+    const entries = buildTowerApplySenseEntries(key);
+    expect(entries[0]?.clientRef).toEqual({
+      bundle: SPAWN_BUNDLE,
+      typeId: ActivityBundleItemType.Lifetime,
+      typeIndex: SPAWN_LIFETIME_INDEX,
+    });
+    expect(entries).toHaveLength(17 + TOWER_TYPE1_ROW_COUNT + 43);
     const type1Bundles = new Set(
       entries
         .filter((e) => e.clientRef.typeId === ActivityBundleItemType.Squad)
@@ -121,8 +142,16 @@ describe("SensorAuth RSAT", () => {
       [0x19d43443, 0x8cc31436, 0x8d3f1166, 0xaa891b91].sort()
     );
     expect(
-      entries.some((e) => e.clientRef.typeId === ActivityBundleItemType.Actor)
-    ).toBe(false);
+      entries.some(
+        (e) => e.clientRef.typeId === ActivityBundleItemType.Scoreboard
+      )
+    ).toBe(true);
+    expect(TOWER_TYPE1_COUNTS.get(2)).toBe(2);
+    const type2 = entries.filter(
+      (e) => e.clientRef.typeId === ActivityBundleItemType.Actor
+    );
+    expect(type2).toHaveLength(30);
+    expect(type2.every((e) => (e.authBits ?? 0) === 0)).toBe(true);
   });
 
   it("full bank puts type-1 before leftover Some", () => {
@@ -197,7 +226,7 @@ describe("SensorAuth RSAT", () => {
     expect(type2).toHaveLength(30);
     expect(type2.every((e) => (e.authBits ?? 0) === 0)).toBe(true);
     const payload = buildTowerSensorAuthRsat({
-      leftoversOnly: true,
+      grantTable: false,
       scenario: {
         activityName: "city_tower_default1",
         bubbleCount: 5,

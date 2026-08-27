@@ -19,7 +19,7 @@ import {
 
 // TOWERSPAWN TODO: Figure out how to map activities/slices -> bundles
 
-/** 4786C0E0 — spawn / identity bank the guest keeps enrolled on Tower. */
+/** 4786C0E0 — story_common. players[], scoreboard, lifetime, fireteam. */
 export const SPAWN_BUNDLE = 0x4786c0e0;
 /** F2D88BD0 — Tower hub leftover the guest enrolls next to 4786C0E0. */
 export const HUB_BUNDLE = 0xf2d88bd0;
@@ -162,7 +162,19 @@ export const TOWER_TYPE1_BANKS: readonly {
   { bundle: MILITARY_BUNDLE, counts: TOWER_MILITARY_TYPE1_COUNTS },
   { bundle: UNDERWATCH_BUNDLE, counts: TOWER_UNDERWATCH_TYPE1_COUNTS },
 ];
+/** Retail first 10800: plaza + military only. Boulevard / underwatch later. */
+export const TOWER_APPLY_SQUAD_BANKS: readonly {
+  bundle: number;
+  counts: ReadonlyMap<number, number>;
+}[] = [
+  { bundle: MILITARY_BUNDLE, counts: TOWER_MILITARY_TYPE1_COUNTS },
+  { bundle: SLICE_BUNDLE, counts: TOWER_TYPE1_COUNTS },
+];
 export const TOWER_TYPE1_ROW_COUNT = TOWER_TYPE1_BANKS.reduce(
+  (n, bank) => n + bank.counts.size,
+  0
+);
+export const TOWER_APPLY_SQUAD_ROW_COUNT = TOWER_APPLY_SQUAD_BANKS.reduce(
   (n, bank) => n + bank.counts.size,
   0
 );
@@ -614,7 +626,22 @@ function noneEntry(
   return entryOn(bundle, typeId, typeIndex, null, senseSchemaBound);
 }
 
-/** Lifetime + type-12. No type-1 — leftover Some before a grant must not walk squads. */
+function squadEntries(bank: {
+  bundle: number;
+  counts: ReadonlyMap<number, number>;
+}): SensorAuthSenseEntry[] {
+  return [...bank.counts.entries()].map(([typeIndex, count]) =>
+    entryOn(
+      bank.bundle,
+      ActivityBundleItemType.Squad,
+      typeIndex,
+      encodeSquadAuth(count),
+      true
+    )
+  );
+}
+
+/** Join grant: 809E2008 Lifetime + Player. Retail 261. */
 export function buildTowerBinderSenseEntries(
   playerKey: bigint
 ): SensorAuthSenseEntry[] {
@@ -638,17 +665,7 @@ export function buildTowerIdentitySenseEntries(
 ): SensorAuthSenseEntry[] {
   return [
     ...buildTowerBinderSenseEntries(playerKey),
-    ...TOWER_TYPE1_BANKS.flatMap((bank) =>
-      [...bank.counts.entries()].map(([typeIndex, count]) =>
-        entryOn(
-          bank.bundle,
-          ActivityBundleItemType.Squad,
-          typeIndex,
-          encodeSquadAuth(count),
-          true
-        )
-      )
-    ),
+    ...TOWER_TYPE1_BANKS.flatMap(squadEntries),
   ];
 }
 
@@ -754,6 +771,17 @@ export function buildTowerSpawnSenseEntries(
     : identity;
 }
 
+/**
+ * Alpha apply: identity + every social squad + leftover Some.
+ * Retail 10800 drops 4786 leftovers and boulevard/underwatch; the
+ * Alpha guest then fails both spawn gates and 8376DEB8.
+ */
+export function buildTowerApplySenseEntries(
+  playerKey: bigint
+): SensorAuthSenseEntry[] {
+  return buildTowerSpawnSenseEntries(playerKey, true);
+}
+
 export function buildSensorAuthUpdateRsat(
   fields: SensorAuthUpdateFields = {}
 ): Buffer {
@@ -811,30 +839,28 @@ export function buildTowerSensorAuthRsat(opts: {
   authorityMachine?: Buffer | null;
   playerKey?: bigint;
   scenario?: ScenarioClient;
-  /** First FAH class 5 only. Later ticks are hasAuth=0. */
+  /** Join grant: hasAuth=1 + Lifetime/Player. Apply: hasAuth=0 + identity/squads/leftovers. */
   grantTable?: boolean;
+  /** Join leftover bind: hasAuth=0 + identity + leftover Some, no Squad. */
+  leftoverBind?: boolean;
   promoteSeq?: number;
-  /** `true` = full leftover bank. */
-  includeLeftovers?: boolean;
-  /** Plaza type-1 rows. Off on the pre-grant leftover flood. */
-  includeType1?: boolean;
-  /** Leftover Some + type-2 None only. Tests / debug. */
-  leftoversOnly?: boolean;
 }): Buffer {
   const grant = opts.grantTable === true;
-  const leftoversOnly = opts.leftoversOnly === true;
-  const leftovers = leftoversOnly || opts.includeLeftovers;
-  const includeType1 = opts.includeType1 !== false;
+  const leftoverBind = opts.leftoverBind === true;
   const playerKey = opts.playerKey ?? playerKeyFromCharacter();
+  let senseEntries = buildTowerApplySenseEntries(playerKey);
+  if (grant) {
+    senseEntries = buildTowerBinderSenseEntries(playerKey);
+  } else if (leftoverBind) {
+    senseEntries = buildTowerSpawnSenseEntries(playerKey, true, false);
+  }
   return buildSensorAuthUpdateRsat({
     activityTime: opts.activityTime,
     authorityMachine: opts.authorityMachine,
     bubbleCount: opts.scenario?.bubbleCount ?? 5,
     emptyBubbles: opts.scenario?.emptyBubbles,
-    hasAuthorityTable: grant && !leftoversOnly,
+    hasAuthorityTable: grant,
     promoteSeq: opts.promoteSeq,
-    senseEntries: leftoversOnly
-      ? buildTowerLeftoverSenseEntries()
-      : buildTowerSpawnSenseEntries(playerKey, leftovers, includeType1),
+    senseEntries,
   });
 }

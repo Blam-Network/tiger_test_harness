@@ -29,6 +29,11 @@ export interface GlobalActivityStateFields {
   instanceId: bigint;
 }
 
+/** Client TOD init denominator. worldServerTime / this = day fraction. */
+export const GAS_SECONDS_PER_DAY = 3600;
+/** 10:00. 0 is midnight. */
+export const GAS_TIME_OF_DAY_FRACTION = 10 / 24;
+
 /** see sub_83619DD0 */
 export function packBubbleStateHandle(bubble: number, state = 0): number {
   return ((bubble & 0b0011_1111) << 3) | (state & 0b0000_0111);
@@ -71,7 +76,9 @@ export function buildGlobalActivityStateRsat(
       valid: true,
       handles: { handles: [] },
       unk2: 0,
-      worldServerTime: 0n,
+      worldServerTime: BigInt(
+        Math.floor(GAS_TIME_OF_DAY_FRACTION * GAS_SECONDS_PER_DAY)
+      ),
       activityId: input.activityId ?? 0,
       activityName: { chars: activityNameChars(input.activityName) },
     },
@@ -236,6 +243,7 @@ export {
   buildSensorAuthTickRsat,
   buildSensorAuthUpdateRsat,
   // TOWERSPAWN TODO: Clean this up - do we need a function for each bundle?
+  buildTowerApplySenseEntries,
   buildTowerBinderSenseEntries,
   buildTowerIdentitySenseEntries,
   buildTowerLeftoverSenseEntries,

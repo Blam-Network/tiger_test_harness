@@ -1,9 +1,9 @@
 import { ActivityBundleItemType, type ActivityBundleTag } from "../types";
 
-/** city_tower_default1 80800533 (809E2008). Bundle 4786C0E0. */
+/** city_tower_default1 80800533 (809E2008). Bundle story_common. */
 export const tag: ActivityBundleTag = {
   activityName: "city_tower_default1",
-  bundle: 0x4786c0e0,
+  bundle: 0x4786c0e0, // story_common
   class: 0x80800533,
   tag: 0x809e2008,
   rows: [

@@ -50,11 +50,10 @@ export class ActivityHostProxySession {
   private activityStateSent = false;
   private sensorAuthGranted = false;
   private membershipPushes = 0;
-  private leftoverAfterFree = false;
   private membershipGeneration = 0;
   private joinIdentity: AhClientIdentity | undefined;
   private keepalive: ReturnType<typeof setInterval> | undefined;
-  // TOWERSPAWN TODO: VERY BAD! DITCH THIS HACK! TERRRIBLE!
+  // in-world time
   private activityClockStarted = 0;
 
   // TOWERSPAWN TODO: WHY DOES THE PROXY HAVE A KIND?
@@ -297,8 +296,6 @@ export class ActivityHostProxySession {
             : "") +
           `req ${parsed.payload.length}B rsp ${body.length}B)`
       );
-      // XWS: class 5 is the first write on the join reply. Plaza slice 24
-      // is not enrolled yet, so leftover Some cannot walk live type-1.
       this.pushJoinState(parsed.sessionId);
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
@@ -306,7 +303,10 @@ export class ActivityHostProxySession {
     }
   }
 
-  // state refresh triggers bulk of sensor auth
+  /**
+   * Retail: first refresh is GAS + WGS + fat SensorAuth (hub/plaza/military).
+   * Join already sent the identity grant.
+   */
   private handleStateRefresh(sessionId: bigint, payload: Buffer): void {
     if (this.activityStateSent) {
       this.pushEntityIndexGrant(sessionId);
@@ -314,14 +314,15 @@ export class ActivityHostProxySession {
     } else {
       this.pushJoinState(sessionId);
     }
+    this.pushActivityGlobals(sessionId);
     if (this.kind === "FAH") {
       this.pushSensorAuthApply(sessionId);
     }
   }
 
   /**
-   * First host state after join-result: grant, entity-index, membership,
-   * GAS, WGS. Full SensorAuth apply waits for state-refresh.
+   * Join-result: identity grant, entity-index, membership. GAS/WGS wait
+   * for state-refresh, matching retail.
    */
   private pushJoinState(sessionId: bigint): void {
     if (this.activityStateSent) {
@@ -340,6 +341,14 @@ export class ActivityHostProxySession {
     this.pushJoinSensorAuth(sessionId);
     this.pushEntityIndexGrant(sessionId);
     this.pushMembership(sessionId);
+    this.startKeepalive(sessionId);
+  }
+
+  private pushActivityGlobals(sessionId: bigint): void {
+    const start = this.manager.getStartRequest();
+    const activityName =
+      start === undefined ? undefined : activityNameForId(start.activityId);
+    const scenario = activityName ? scenarioClient(activityName) : undefined;
     const gas = buildGlobalActivityStateRsat({
       activityChecksum: scenario?.privateChecksum,
       activityId: start?.activityId,
@@ -355,7 +364,7 @@ export class ActivityHostProxySession {
       sessionId,
       ActivityHostMessageType.GlobalActivityState,
       gas,
-      `join-state → gas ${gas.length}B` +
+      `gas ${gas.length}B` +
         (start ? ` start activity=${start.activityId}` : " start=none") +
         (scenario
           ? ` name=${scenario.activityName} bubbles=${scenario.bubbleCount}` +
@@ -368,9 +377,8 @@ export class ActivityHostProxySession {
       sessionId,
       ActivityHostMessageType.WorldGlobalsState,
       wgs,
-      `join-state → wgs ${wgs.length}B`
+      `wgs ${wgs.length}B`
     );
-    this.startKeepalive(sessionId);
   }
 
   private pushEntityIndexGrant(sessionId: bigint): void {
@@ -394,7 +402,7 @@ export class ActivityHostProxySession {
 
   // TODO: Entity Indices
   /**
-   * FreeEntityIndices (class 20) happens when world changes.
+   * FreeEntityIndices (class 20). Retail Tower capture never sent this.
    */
   private handleFreeEntityIndices(sessionId: bigint, payload: Buffer): void {
     this.manager.host(this.kind).noteEntityIndicesFreed(payload);
@@ -402,13 +410,6 @@ export class ActivityHostProxySession {
       `AH proxy free_entity_indices absorbed session=0x${sessionId.toString(16)} ` +
         `mask=${payload.length}B`
     );
-    // Slice-8 type-1 is gone; plaza type-1 is not enrolled yet. One
-    // leftover Some here is the last safe window (join leftovers die
-    // with this world).
-    if (this.kind === "FAH" && !this.leftoverAfterFree) {
-      this.leftoverAfterFree = true;
-      this.pushLeftoverBind(sessionId);
-    }
   }
 
   /**
@@ -431,11 +432,17 @@ export class ActivityHostProxySession {
     );
   }
 
+  /**
+   * SensorAuth activity ticks @ 30 Hz. 0 stalls combatant place.
+   * Visual TOD is GAS worldServerTime, not this.
+   */
   private activityTicks(): number {
     if (!this.activityClockStarted) {
       this.activityClockStarted = Date.now();
     }
-    return Math.floor((Date.now() - this.activityClockStarted) / (1000 / 30));
+    return (
+      1 + Math.floor((Date.now() - this.activityClockStarted) / (1000 / 30))
+    );
   }
 
   private towerAuthOpts() {
@@ -451,17 +458,14 @@ export class ActivityHostProxySession {
   }
 
   /**
-   * Lifetime + Player, plus spawn/hub Scoreboard, HardWipeGlobals, Timer,
-   * Fireteam, SafeZone, ObjectFilter, PlayerObjective, Object, and plaza
-   * Actor as None. No Squad. hasAuth=0.
+   * Alpha leftover bind: Lifetime + Player + leftover Some, no Squad.
+   * 4786 leftovers have to land before plaza enrolls.
    */
   private pushLeftoverBind(sessionId: bigint): void {
     const opts = this.towerAuthOpts();
     const rsat = buildTowerSensorAuthRsat({
       ...opts,
-      grantTable: false,
-      includeLeftovers: true,
-      includeType1: false,
+      leftoverBind: true,
     });
     this.pushAh(
       sessionId,
@@ -472,17 +476,14 @@ export class ActivityHostProxySession {
   }
 
   /**
-   * State-refresh apply: Lifetime + Player + Squad (plaza / boulevard /
-   * military / underwatch) + the same spawn/hub items as leftover bind.
-   * hasAuth=0.
+   * State-refresh apply: identity + every social squad + leftover Some.
+   * hasAuth=0. Retail 10800 is thinner; Alpha spawn gates need this bank.
    */
   private pushSensorAuthApply(sessionId: bigint): void {
     const opts = this.towerAuthOpts();
     const rsat = buildTowerSensorAuthRsat({
       ...opts,
       grantTable: false,
-      includeLeftovers: true,
-      includeType1: true,
     });
     this.pushAh(
       sessionId,
@@ -493,8 +494,7 @@ export class ActivityHostProxySession {
   }
 
   /**
-   * Join: leftover bind first, then grant — Lifetime + Player + Squad,
-   * hasAuth=1, no spawn/hub session objects.
+   * Join: leftover bind first, then grant — Lifetime + Player, hasAuth=1.
    */
   private pushJoinSensorAuth(sessionId: bigint): void {
     this.pushLeftoverBind(sessionId);
@@ -505,8 +505,6 @@ export class ActivityHostProxySession {
     const grant = buildTowerSensorAuthRsat({
       ...opts,
       grantTable: true,
-      includeLeftovers: false,
-      includeType1: true,
     });
     const bubbles = opts.scenario?.bubbleCount ?? 5;
     this.pushAh(
