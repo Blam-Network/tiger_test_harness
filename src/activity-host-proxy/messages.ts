@@ -42,13 +42,9 @@ export enum ActivityHostMessageType {
   RequestScriptUpdates = 40,
   BugClaw = 41,
   AdvanceReplicationEpoch = 42,
-  // Not in pre alpha?
-  // ReservationsFailed = 43,
-  // ReportLagSwitch = 44,
-  // ConnectionQualityReport = 45,
-  // SpeculativeMigration = 46,
-  // HighWater = 47,
-  // RefreshInspirations = 48,
+  // Later builds may add 43 ReservationsFailed, 44 ReportLagSwitch, 45
+  // ConnectionQualityReport, 46 SpeculativeMigration, 47 HighWater and 48
+  // RefreshInspirations; none is handled here.
 }
 
 export function isActivityHostMessageType(
@@ -147,18 +143,6 @@ export function activityHostMessageTypeName(
       return "bug_claw";
     case ActivityHostMessageType.AdvanceReplicationEpoch:
       return "advance_replication_epoch";
-    // case ActivityHostMessageType.ReservationsFailed:
-    //   return "reservations_failed";
-    // case ActivityHostMessageType.ReportLagSwitch:
-    //   return "report_lag_switch";
-    // case ActivityHostMessageType.ConnectionQualityReport:
-    //   return "connection_quality_report";
-    // case ActivityHostMessageType.SpeculativeMigration:
-    //   return "speculative_migration";
-    // case ActivityHostMessageType.HighWater:
-    //   return "high_water";
-    // case ActivityHostMessageType.RefreshInspirations:
-    //   return "refresh_inspirations";
     default: {
       const _: never = type;
       return _;

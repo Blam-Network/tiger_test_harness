@@ -1,15 +1,11 @@
 import { Module } from "@nestjs/common";
-import { ILoggerSymbol } from "../ILogger";
-import { ShutdownObserver } from "../ShutdownObserver";
-import { loggerWithPrefix } from "../utils/logger";
+import { InvestmentModule } from "../investment/investment.module";
+import { ShutdownObserver } from "../shutdown-observer";
 import { BungieAccessProtocolServerService } from "./bungie-access-protocol-server.service";
 
 @Module({
-  providers: [
-    BungieAccessProtocolServerService,
-    loggerWithPrefix("BungieAccessProtocol"),
-    ShutdownObserver,
-  ],
-  exports: [BungieAccessProtocolServerService, ILoggerSymbol, ShutdownObserver],
+  imports: [InvestmentModule],
+  providers: [BungieAccessProtocolServerService, ShutdownObserver],
+  exports: [BungieAccessProtocolServerService, ShutdownObserver],
 })
 export class BungieAccessProtocolModule {}

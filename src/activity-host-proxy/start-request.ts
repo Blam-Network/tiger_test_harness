@@ -1,40 +1,63 @@
-import { decodeServerMessage, rsat } from "@blamnetwork/rsat";
-import { e_server_message_network_id } from "../bungie-access-protocol/rsat/server-message";
-
-/**
- * Wire-6 body is always 3095 (sub_82B80BB0). Type 3 copies the next 2580.
- *
- * sub_829DF8B8 / sub_829DE238 / sub_829DF6C8:
- *   u16be optionsSize
- *   u8[512]  server_message (nid 1303 + 80801A55)
- *   u16be streamSize
- *   u8[2064] bitstream (sub_83690600 writes nothing we have named yet)
- */
-export const ACTIVITY_HOST_MANAGER_REQUEST_SIZE = 3095;
-export const START_REQUEST_PAYLOAD_SIZE = 2580;
-export const START_REQUEST_OPTIONS_CAPACITY = 512;
-export const START_REQUEST_STREAM_CAPACITY = 2064;
-export const START_REQUEST_STREAM_SIZE_OFFSET =
-  2 + START_REQUEST_OPTIONS_CAPACITY;
-export const START_REQUEST_STREAM_OFFSET = START_REQUEST_STREAM_SIZE_OFFSET + 2;
-
-/** 80801A55 — activity_host_get_activity_host_startup_options request. */
-export const ActivityHostStartupOptionsRequest = rsat.schema(0x80801a55, {
-  activityId: rsat.i16({ size: 16, bias: 0x8000 }),
-  /** 1 when the start object's ip byte is not -1 (sub_83676150). */
-  ipValid: rsat.bool(),
-  unknown1: rsat.bool(),
-});
+import { decode, decodeServerMessage } from "@blamnetwork/rsat";
+import { e_server_message_network_id } from "../bungie-access-protocol/rsat/constants";
+import type { AhClientIdentity } from "./join";
+import { activityHostBuild } from "./versions";
 
 export interface ParsedStartRequest {
   activityId: number;
+  // Decode of `stream` as 808044EB; undefined
+  // if the stream is empty or the layout ever changes underneath us. Order
+  // is the fireteam roster as the manager sent it; `requesterMachine` names
+  // which member is this connection.
+  fireteam?: AhClientIdentity[];
   ipValid: boolean;
   options: Buffer;
+  requesterMachine?: Buffer;
   stream: Buffer;
   unknown1: boolean;
 }
 
+// Decode the 808044EB bitstream for fireteam membership and the requesting
+// machine. Never throws: a layout change here must not kill the request
+// path, only fall back to the caller's other identification heuristics.
+function decodeStartRequestStream(
+  stream: Buffer
+): { fireteam: AhClientIdentity[]; requesterMachine: Buffer } | undefined {
+  if (stream.length === 0) {
+    return;
+  }
+  try {
+    const decoded = decode(
+      activityHostBuild().startRequest.StartRequestStream,
+      stream
+    );
+    if (decoded.fireteam.members.length === 0) {
+      // The client asserts the fireteam count is never 0 on the real wire;
+      // seeing it here means this buffer doesn't match the 808044EB layout.
+      return;
+    }
+    return {
+      fireteam: decoded.fireteam.members.map((m) => ({
+        machine: Buffer.from(m.machine),
+        player: Buffer.from(m.player),
+        account: m.account,
+        character: m.character,
+      })),
+      requesterMachine: Buffer.from(decoded.machine),
+    };
+  } catch {
+    return;
+  }
+}
+
 export function parseStartRequest(payload: Buffer): ParsedStartRequest | null {
+  const {
+    ActivityHostStartupOptionsRequest,
+    START_REQUEST_OPTIONS_CAPACITY,
+    START_REQUEST_STREAM_CAPACITY,
+    START_REQUEST_STREAM_OFFSET,
+    START_REQUEST_STREAM_SIZE_OFFSET,
+  } = activityHostBuild().startRequest;
   if (payload.length < START_REQUEST_STREAM_OFFSET) {
     return null;
   }
@@ -59,6 +82,7 @@ export function parseStartRequest(payload: Buffer): ParsedStartRequest | null {
       START_REQUEST_STREAM_OFFSET + streamSize
     )
   );
+  const decodedStream = decodeStartRequestStream(stream);
 
   if (optionsSize === 0) {
     return {
@@ -67,6 +91,7 @@ export function parseStartRequest(payload: Buffer): ParsedStartRequest | null {
       unknown1: false,
       options,
       stream,
+      ...decodedStream,
     };
   }
 
@@ -87,6 +112,7 @@ export function parseStartRequest(payload: Buffer): ParsedStartRequest | null {
       unknown1: decoded.value.unknown1,
       options,
       stream,
+      ...decodedStream,
     };
   } catch {
     return null;
@@ -98,4 +124,32 @@ export function formatStartRequest(parsed: ParsedStartRequest): string {
     `activity=${parsed.activityId} ipValid=${parsed.ipValid ? 1 : 0} ` +
     `options=${parsed.options.length}B stream=${parsed.stream.length}B`
   );
+}
+
+const U64_MASK = (1n << 64n) - 1n;
+
+// Bit offset of `value` as a big-endian u64 anywhere in `stream`, or -1.
+// The stream is the bit-packed player configuration; its "User state"
+// soids (account, then character 32 bits later) land on arbitrary bit
+// boundaries, so a byte-aligned search would miss them.
+export function findU64BitOffset(stream: Buffer, value: bigint): number {
+  const last = stream.length - 8;
+  for (let i = 0; i <= last; i++) {
+    const aligned = stream.readBigUInt64BE(i);
+    if (aligned === value) {
+      return i * 8;
+    }
+    if (i === last) {
+      break;
+    }
+    const spill = BigInt(stream[i + 8]);
+    for (let shift = 1; shift < 8; shift++) {
+      const window =
+        ((aligned << BigInt(shift)) | (spill >> BigInt(8 - shift))) & U64_MASK;
+      if (window === value) {
+        return i * 8 + shift;
+      }
+    }
+  }
+  return -1;
 }

@@ -1,18 +1,7 @@
-/**
- * Destiny PreAlpha XHTTP sign-on failover ports (hosts.json / title DNS).
- * Override with SIGNON_HTTP_PORTS=32000,32001,...
- */
-export const SIGNON_HTTP_PORTS_DEFAULT = [
-  32000, 32001, 32004, 32005, 32008, 32009,
-] as const;
+import { resolvePortList } from "../env";
+import { signonBuild } from "./versions";
 
+// Override the build's ports with SIGNON_HTTP_PORTS=443,32000,...
 export function resolveSignonHttpPorts(): number[] {
-  const raw = process.env.SIGNON_HTTP_PORTS?.trim();
-  if (!raw) {
-    return [...SIGNON_HTTP_PORTS_DEFAULT];
-  }
-  return raw
-    .split(",")
-    .map((s) => Number(s.trim()))
-    .filter((n) => Number.isFinite(n) && n > 0);
+  return resolvePortList("SIGNON_HTTP_PORTS", signonBuild().ports);
 }

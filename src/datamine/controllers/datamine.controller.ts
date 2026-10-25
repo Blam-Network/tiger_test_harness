@@ -8,9 +8,7 @@ import { DatamineService } from "../services/datamine.service";
 export class DatamineController {
   constructor(private readonly datamineService: DatamineService) {}
 
-  /**
-   * Datamine upload endpoint (dm-*.upload.deadorbit.net).
-   */
+  // Datamine upload endpoint (dm-*.upload.deadorbit.net).
   @Put("/ticket_drop")
   @Post("/ticket_drop")
   @HttpCode(200)

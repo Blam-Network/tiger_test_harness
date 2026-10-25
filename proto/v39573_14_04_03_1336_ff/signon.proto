@@ -1,0 +1,139 @@
+syntax = "proto2";
+
+package destiny.v39573.signon;
+
+// PS4 HTTPS POST https://www{1-8}.signon.{gravityshavings,deadorbit}.net
+// /SignOn?platform=orbis&build=39573.14.04.03.1336.ff, body
+// application/octet-stream. Built by sub_761620, parsed by sub_75FD90
+// (addresses are IDA = ELF vaddr). Every table here is byte for byte the
+// pre-alpha's.
+//
+// nanopb 0.2 with the same Bungie twist as the pre-alpha: a missing
+// required field only fails when it has no default value and is not a
+// submessage.
+
+message SignonRequest {
+  // Always 13
+  optional uint32 id = 1;
+  // The PSN OAuth reply body (bdAuthPS4 retrieveSCEAccessToken, scope openid,
+  // sub_183DA50), copied out at status 700. The Alpha Trial's
+  // token; the pre-alpha sent the bare NP authorization code.
+  optional bytes ticket = 2;
+  // 8 chars
+  optional string language = 3;
+  // Previous security_token (ticket field 4), sent on refresh
+  optional bytes security_token = 4;
+  // 64 chars set by the UI; sent only when not empty
+  optional string unknown5 = 5;
+  // 64 chars: line 12 of the version blob, the same string the URL carries
+  optional string build = 6;
+  // True when the client accepts the prompt flagged by response field 8
+  optional bool accepted_prompt = 7;
+  optional bool reserved8 = 8;
+  optional string email = 11;
+  // Echo of queue field 7 (up to 256 bytes)
+  optional bytes queue_token = 12;
+  // FNV-1a 64 of the session id string
+  optional uint64 reserved13 = 13;
+  // Echo of response field 10 (up to 64)
+  repeated uint32 unknown15 = 15;
+}
+
+// Ticket field 9.
+message Unknown9 {
+  required fixed32 unknown1 = 1;
+  required fixed32 unknown2 = 2;
+  required fixed32 unknown3 = 3;
+}
+
+// Fields 1-7 are enforced by the decoder (nanopb 0x2B26F10). No field 11.
+message SuccessTicket {
+  // up to 16 bytes, unused by the parser
+  required bytes id = 1;
+  // up to 16 bytes, BAP secure hello
+  required bytes session_key_aes = 2;
+  // up to 16 bytes, BAP secure hello
+  required bytes session_key_hmac = 3;
+  // up to 512 bytes; keep it non-empty (copied into a heap buffer of its length)
+  required bytes security_token = 4;
+  // Expiry time
+  required uint64 reserved5 = 5;
+  // BAP IPv4, first octet in the low byte (127.0.0.1 = 0x0100007F). Taken
+  // only when non-zero.
+  required uint32 bap_ipv4 = 6;
+  // BAP TCP port
+  required uint32 bap_port = 7;
+  optional Unknown9 unknown9 = 9;
+}
+
+// Response field 3 (type 1).
+message SignonQueue {
+  required uint32 unknown1 = 1;
+  required uint32 unknown2 = 2;
+  // Retry delay in seconds
+  required uint32 unknown3 = 3;
+  // 256 chars
+  required string unknown4 = 4;
+  required bool unknown5 = 5;
+  optional uint32 unknown6 = 6;
+  // up to 256 bytes, echoed back as request field 12
+  optional bytes queue_token = 7;
+}
+
+// Response field 7 (type 2).
+message SignonError {
+  required uint32 unknown1 = 1;
+  optional uint32 unknown2 = 2;
+  optional uint64 unknown3 = 3;
+  // 200 chars
+  optional string unknown4 = 4;
+  // 50 chars
+  optional string unknown5 = 5;
+}
+
+// Engine Configuration field 1 (nanopb 0x2B1E1C0). Two fields: there is no
+// content guid in this build. Both carry defaults.
+message ContentConfiguration {
+  // up to 4096 bytes
+  optional bytes unknown1 = 1;
+  // Read in bootflow:content_check (sub_8C3320). Empty stops the client:
+  // "Signon server failed to provide content manifest URL."
+  optional string content_manifest_url = 2;
+}
+
+// Engine Configuration (nanopb 0x2B26820, fields 1 and 3-41). Only the
+// content submessage is used so far; every other field has defaults.
+message EngineConfiguration {
+  optional ContentConfiguration content = 1;
+}
+
+// Response field 4 (nanopb 0x24D3300). Same table as the BAP
+// client_config_response, hence the names.
+message SignonConfiguration {
+  // enforced
+  required uint64 cookie = 1;
+  // enforced
+  required uint32 social_matchmaking_id = 2;
+  // EngineConfiguration, a callback field decoded in place
+  optional bytes engine_configuration = 3;
+}
+
+message Unknown10 {
+  repeated uint32 unknown1 = 1;
+}
+
+message SignonResponse {
+  // 0 = success, 1 = queue, 2 = error, 3 = another signon state
+  required uint32 type = 1;
+  optional SuccessTicket success_ticket = 2;
+  optional SignonQueue queue = 3;
+  optional SignonConfiguration configuration = 4;
+  // Logged as silo_id
+  optional uint64 silo_id = 5;
+  // Logged as server content version (64 chars)
+  optional string content_version = 6;
+  optional SignonError error = 7;
+  // Prompt flags
+  optional uint32 unknown8 = 8;
+  optional Unknown10 unknown10 = 10;
+}

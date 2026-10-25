@@ -1,0 +1,26 @@
+name: Set up
+description: Node 24, the tiger packages from the vendor/tiger submodule, and this repo's dependencies. Run after a checkout with submodules.
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        cache: npm
+        cache-dependency-path: |
+          package-lock.json
+          vendor/tiger/package-lock.json
+
+    # Only the packages this repo links (package.json): the tiger workspaces
+    # in dependency order, without the debugger and viewer apps.
+    - name: Build tiger
+      shell: bash
+      working-directory: vendor/tiger
+      run: |
+        npm ci
+        npm run build -w packages/poodle -w packages/rsat -w packages/gibbon -w packages/bullshcript -w packages/datamine
+
+    - name: Install
+      shell: bash
+      run: npm ci

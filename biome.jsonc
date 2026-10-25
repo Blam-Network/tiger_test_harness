@@ -10,9 +10,16 @@
       "!dist",
       "!node_modules",
       "!src/generated",
-      "!uploads",
-      "!title_storage",
-      "!public/storage"
+      "!cache",
+      "!compiled_bs",
+      "!datamine",
+      "!logs",
+      "!notes",
+      "!packets",
+      "!scratch",
+      "!scripts-decompiled",
+      "!tmp",
+      "!vendor"
     ]
   },
   "javascript": {
@@ -23,8 +30,7 @@
   "linter": {
     "rules": {
       "style": {
-        "useNumericSeparators": "off",
-        "useFilenamingConvention": "off"
+        "useNumericSeparators": "off"
       },
       "performance": {
         "noBarrelFile": "off",
@@ -61,9 +67,6 @@
             "noGlobalDirnameFilename": "off",
             "noUnusedFunctionParameters": "off",
             "noUnusedPrivateClassMembers": "off"
-          },
-          "performance": {
-            "noBarrelFile": "off"
           }
         }
       }
@@ -72,6 +75,9 @@
       "includes": ["src/**/*.test.ts"],
       "linter": {
         "rules": {
+          "complexity": {
+            "useLiteralKeys": "off"
+          },
           "style": {
             "useReadonlyClassProperties": "off"
           },

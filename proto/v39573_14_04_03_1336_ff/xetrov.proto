@@ -1,0 +1,13 @@
+syntax = "proto2";
+
+package destiny.v39573.bap;
+
+// client_to_xetrov_request (BAP 0xAB, 0xA2D1F0), the pre-alpha's table byte
+// for byte. The event payload layout is not dumped for this build.
+message ClientToXetrovNotification {
+  required uint32 reserved1 = 1;
+  required uint32 reserved2 = 2;
+  optional uint64 reserved3 = 3;
+  // up to 145024 bytes
+  required bytes event = 4;
+}

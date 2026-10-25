@@ -1,0 +1,4 @@
+[submodule "vendor/tiger"]
+	path = vendor/tiger
+	url = https://github.com/Blam-Network/tiger.git
+	branch = main

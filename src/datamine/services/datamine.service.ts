@@ -1,153 +1,16 @@
-import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { inflateRawSync } from "node:zlib";
+import { read_datamine_file, type s_datamine_file } from "@blamnetwork/blf";
 import {
-  e_datamine_parameter_type,
-  get_formatted_event_string,
-  read_datamine_file,
-  type s_data_mine_header,
-  type s_datamine_event,
-  type s_datamine_file,
-} from "@blamnetwork/blf";
-import { Inject, Injectable, Optional } from "@nestjs/common";
-import type { DatamineParameterType } from "@prisma/client";
+  event_error,
+  event_message,
+  event_warning,
+} from "@blamnetwork/datamine";
+import { Injectable } from "@nestjs/common";
 import * as yauzl from "yauzl";
-import type ILogger from "../../ILogger";
-import { ILoggerSymbol } from "../../ILogger";
-import { DATAMINE_DIR } from "../constants";
-import { BnetPrismaToken, type PrismaService } from "../prisma.service";
 
 const DATAMINE_ZIP_ENTRY = "compressed.dat";
 const MULTIPART_BOUNDARY_RE = /^--([^\r\n]+)/;
 const MULTIPART_UPLOAD_NAME_RE = /name="upload"/i;
-const FILENAME_FORBIDDEN = new Set('<>:"/\\|?*');
-
-/** Windows FILETIME (100ns since 1601-01-01) → Date. */
-const FILETIME_EPOCH_DIFF_MS = 11_644_473_600_000n;
-
-const PRIORITY_MAP: Record<number, string> = {
-  0: "verbose",
-  1: "status ",
-  2: "message",
-  3: "WARNING",
-  4: "-ERROR-",
-  5: "-CRITICAL-",
-};
-
-function fileTimeToDate(filetime: bigint): Date {
-  return new Date(Number(filetime / 10_000n - FILETIME_EPOCH_DIFF_MS));
-}
-
-/** MM.DD.YY HH:mm:ss.SSS — matches web_private datamine log download. */
-function formatEventDateTime(date: Date): string {
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  const year = String(date.getFullYear()).slice(-2);
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  const seconds = String(date.getSeconds()).padStart(2, "0");
-  const milliseconds = String(date.getMilliseconds()).padStart(3, "0");
-  return `${month}.${day}.${year} ${hours}:${minutes}:${seconds}.${milliseconds}`;
-}
-
-function formatEventIndex(index: number): string {
-  return String(index).padStart(7, "0");
-}
-
-function getPriorityString(priority: number): string | undefined {
-  return PRIORITY_MAP[priority];
-}
-
-function headerTitle(header: s_data_mine_header): string {
-  if ("title" in header && header.title) {
-    return header.title;
-  }
-
-  if (
-    "application_name" in header &&
-    header.application_name &&
-    header.application_name.startsWith("tiger_")
-  ) {
-    return "tiger";
-  }
-  return "unknown";
-}
-
-/** Prefer header filetime; if unset (0), fall back to earliest event. */
-function resolveSessionStartDate(datamine: s_datamine_file): Date {
-  if (datamine.header.session_start_date !== 0n) {
-    return fileTimeToDate(datamine.header.session_start_date);
-  }
-  let earliest: bigint | undefined;
-  for (const event of datamine.events) {
-    if (event.header.event_date === 0n) {
-      continue;
-    }
-    if (earliest === undefined || event.header.event_date < earliest) {
-      earliest = event.header.event_date;
-    }
-  }
-  return earliest === undefined ? fileTimeToDate(0n) : fileTimeToDate(earliest);
-}
-
-function sanitizeFilename(value: string): string {
-  let out = "";
-  for (const ch of value) {
-    const code = ch.codePointAt(0) ?? 0;
-    out += code < 32 || FILENAME_FORBIDDEN.has(ch) ? "_" : ch;
-  }
-  return out.slice(0, 180);
-}
-
-function truncate(value: string, max: number): string {
-  return value.length <= max ? value : value.slice(0, max);
-}
-
-function formatDatamineLogHeader(header: s_data_mine_header): string {
-  const banner =
-    "============================================================================================\n";
-  return `${banner}blamnet datamine ${headerTitle(header)} ${header.build_string} \n${banner}\n`;
-}
-
-function formatDatamineLogEvents(events: s_datamine_event[]): string {
-  const ordered = [...events].sort(
-    (a, b) => a.header.event_index - b.header.event_index
-  );
-  let log = "";
-  for (const event of ordered) {
-    log += formatDatamineLogLine(event);
-  }
-  return log;
-}
-
-function formatDatamineLogLine(event: s_datamine_event): string {
-  const dateStr = formatEventDateTime(fileTimeToDate(event.header.event_date));
-  const indexStr = formatEventIndex(event.header.event_index);
-  // v1/v2: priority is on the event. v3: severity lives on the definition
-  // (byte after format_major); occurrence only carries definition_id.
-  const priorityStr = getPriorityString(event.header.priority);
-  const message =
-    get_formatted_event_string(event) ??
-    `<invalid message string: ${event.header.event_name}>`;
-  const priorityPart = priorityStr ? ` ${priorityStr}` : "";
-  return `${dateStr} ${indexStr}${priorityPart} ${message}\n`;
-}
-
-function convertParameterType(
-  blfType: e_datamine_parameter_type
-): DatamineParameterType {
-  switch (blfType) {
-    case e_datamine_parameter_type._datamine_parameter_type_long:
-      return "LONG";
-    case e_datamine_parameter_type._datamine_parameter_type_int64:
-      return "INT64";
-    case e_datamine_parameter_type._datamine_parameter_type_float:
-      return "FLOAT";
-    case e_datamine_parameter_type._datamine_parameter_type_string:
-      return "STRING";
-    default:
-      throw new Error(`Unknown parameter type: ${blfType}`);
-  }
-}
 
 function extractMultipartFile(body: Buffer): Buffer | undefined {
   const asAscii = body.toString("latin1");
@@ -180,6 +43,100 @@ function extractMultipartFile(body: Buffer): Buffer | undefined {
     return Buffer.from(payload, "latin1");
   }
   return;
+}
+
+// Every entry in a zip, by name. Crash archives are a few small text files
+// plus a ~3.5 MB screenshot, so reading them all is fine. Names are left
+// undecoded because yauzl rejects the console's device paths
+// ("d:/sku_config.txt") as absolute when it decodes them itself.
+function readZipEntries(buffer: Buffer): Promise<Map<string, Buffer>> {
+  return new Promise((resolve, reject) => {
+    const options = { lazyEntries: true, decodeStrings: false };
+    yauzl.fromBuffer(buffer, options, (err, zipfile) => {
+      if (err || !zipfile) {
+        reject(err ?? new Error("failed to open zip"));
+        return;
+      }
+      const entries = new Map<string, Buffer>();
+      zipfile.on("entry", (entry) => {
+        const fileName = Buffer.from(
+          entry.fileName as unknown as Uint8Array
+        ).toString("latin1");
+        if (fileName.endsWith("/")) {
+          zipfile.readEntry();
+          return;
+        }
+        zipfile.openReadStream(entry, (streamErr, stream) => {
+          if (streamErr || !stream) {
+            reject(streamErr ?? new Error("failed to read zip entry"));
+            return;
+          }
+          const chunks: Buffer[] = [];
+          stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+          stream.on("end", () => {
+            entries.set(fileName, Buffer.concat(chunks));
+            zipfile.readEntry();
+          });
+          stream.on("error", reject);
+        });
+      });
+      zipfile.on("end", () => resolve(entries));
+      zipfile.on("error", reject);
+      zipfile.readEntry();
+    });
+  });
+}
+
+const LOCAL_FILE_HEADER = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+const LOCAL_FILE_HEADER_SIZE = 30;
+const ZIP_METHOD_DEFLATE = 8;
+
+// Walks local file headers instead of the central directory, keeping every
+// entry whose data fully arrived. For partial (multi-part) uploads.
+function readLocalZipEntries(buffer: Buffer): Map<string, Buffer> {
+  const entries = new Map<string, Buffer>();
+  let offset = buffer.indexOf(LOCAL_FILE_HEADER);
+  while (offset >= 0 && offset + LOCAL_FILE_HEADER_SIZE <= buffer.length) {
+    const method = buffer.readUInt16LE(offset + 8);
+    const compressedSize = buffer.readUInt32LE(offset + 18);
+    const nameLength = buffer.readUInt16LE(offset + 26);
+    const extraLength = buffer.readUInt16LE(offset + 28);
+    const nameStart = offset + LOCAL_FILE_HEADER_SIZE;
+    const dataStart = nameStart + nameLength + extraLength;
+    const dataEnd = dataStart + compressedSize;
+    if (dataEnd > buffer.length) {
+      break;
+    }
+    const name = buffer.toString("latin1", nameStart, nameStart + nameLength);
+    const data = buffer.subarray(dataStart, dataEnd);
+    try {
+      entries.set(
+        name,
+        method === ZIP_METHOD_DEFLATE ? inflateRawSync(data) : Buffer.from(data)
+      );
+    } catch {
+      // Corrupt entry; keep the rest.
+    }
+    offset = buffer.indexOf(LOCAL_FILE_HEADER, dataEnd);
+  }
+  return entries;
+}
+
+const CRASH_INFO_ENTRY = "crash_info.txt";
+const LINE_BREAK_RE = /\r?\n/;
+
+// The line after each `<label>:` header in crash_info.txt, e.g. "halt
+// information:" -> "failed to load bootstrap_patchable".
+function crashInfoField(info: string, label: string): string | undefined {
+  const lines = info.split(LINE_BREAK_RE);
+  const index = lines.findIndex((line) => line.trim() === `${label}:`);
+  return index < 0 ? undefined : lines[index + 1]?.trim();
+}
+
+// "state:: bootflow:bap_signin" style lines.
+function crashInfoValue(info: string, key: string): string | undefined {
+  const match = info.match(new RegExp(`^\\s*${key}:+\\s*(.*)$`, "m"));
+  return match?.[1]?.trim();
 }
 
 function openZipEntry(buffer: Buffer, fileName: string): Promise<Buffer> {
@@ -219,13 +176,8 @@ function openZipEntry(buffer: Buffer, fileName: string): Promise<Buffer> {
 }
 
 async function parseTicketDropBody(
-  body: Buffer
+  upload: Buffer
 ): Promise<s_datamine_file | undefined> {
-  const upload = extractMultipartFile(body);
-  if (!upload) {
-    return;
-  }
-
   // Multipart usually wraps a ZIP; compressed.dat may also arrive bare.
   let datamineBuf: Buffer;
   if (upload.length >= 2 && upload[0] === 0xff && upload[1] === 0xfe) {
@@ -241,195 +193,89 @@ async function parseTicketDropBody(
   return read_datamine_file(datamineBuf);
 }
 
+// Uploads are only logged; nothing is written to disk.
 @Injectable()
 export class DatamineService {
-  constructor(
-    @Inject(ILoggerSymbol) private readonly logger: ILogger,
-    @Optional()
-    @Inject(BnetPrismaToken)
-    private readonly prisma: PrismaService | null
-  ) {}
-
   async absorbTicketDrop(
     body: Buffer,
     meta?: { method?: string; host?: string }
-  ): Promise<{ ok: true; bytes: number; path?: string; events?: number }> {
+  ): Promise<{ ok: true; bytes: number; events?: number }> {
     const method = meta?.method ?? "PUT";
     const host = meta?.host ? ` host=${meta.host}` : "";
 
     let events: number | undefined;
-    let path: string | undefined;
     try {
-      const datamine = await parseTicketDropBody(body);
+      const upload = extractMultipartFile(body);
+      if (!upload) {
+        event_warning(
+          "datamine: %s /ticket_drop not multipart (%dB)%s",
+          method,
+          body.length,
+          host
+        );
+        return { ok: true, bytes: body.length };
+      }
+
+      // Crash reports (bootflow halts, asserts) arrive as crash_archive.zip.
+      if (await this.absorbCrashArchive(upload)) {
+        return { ok: true, bytes: body.length };
+      }
+
+      const datamine = await parseTicketDropBody(upload);
       if (datamine) {
         events = datamine.events.length;
-        if (this.prisma) {
-          await this.pushToDatabase(datamine);
-        } else {
-          path = this.saveParsedTxt(datamine);
-        }
-        this.logger.log(
-          `Datamine upload received for session ${datamine.header.sessionid} (${events} events)`
+        event_message(
+          "datamine: Datamine upload received for session %s (%d events)",
+          datamine.header.sessionid,
+          events
         );
       } else {
-        this.logger.warn(
-          `${method} /ticket_drop parse failed (${body.length}B)${host}`
+        // The report worker uploads multipart crash/report bundles here.
+        event_warning(
+          "datamine: %s /ticket_drop parse failed (%dB)%s",
+          method,
+          body.length,
+          host
         );
       }
     } catch (error) {
-      this.logger.error(
-        `${method} /ticket_drop parse error: ${error instanceof Error ? error.message : error}`
+      event_error(
+        "datamine: %s /ticket_drop parse error: %s",
+        method,
+        error instanceof Error ? error.message : String(error)
       );
     }
 
-    return { ok: true, bytes: body.length, path, events };
+    return { ok: true, bytes: body.length, events };
   }
 
-  private async pushToDatabase(datamine: s_datamine_file): Promise<void> {
-    if (!this.prisma) {
-      return;
+  // Whether the upload was a crash archive (its report is logged).
+  private async absorbCrashArchive(upload: Buffer): Promise<boolean> {
+    if (upload.length < 2 || upload[0] !== 0x50 || upload[1] !== 0x4b) {
+      return false;
     }
-
+    let entries: Map<string, Buffer>;
     try {
-      await this.prisma.$transaction(
-        async (tx) => {
-          const sessionStart = resolveSessionStartDate(datamine);
-          let session = await tx.datamine_session.findUnique({
-            where: {
-              sessionid_session_start_date: {
-                sessionid: datamine.header.sessionid,
-                session_start_date: sessionStart,
-              },
-            },
-          });
-
-          if (!session) {
-            session = await tx.datamine_session.create({
-              data: {
-                sessionid: truncate(datamine.header.sessionid, 128),
-                build_string: truncate(datamine.header.build_string, 32),
-                build_number: datamine.header.build_number,
-                systemid: truncate(datamine.header.systemid, 160),
-                title: truncate(headerTitle(datamine.header), 32),
-                session_start_date: sessionStart,
-              },
-            });
-          }
-
-          const eventsData = datamine.events.map((event) => ({
-            event_index: event.header.event_index,
-            session_id: session.id,
-            priority: event.header.priority,
-            game_instance: event.header.game_info.game_instance.toString(),
-            map: truncate(event.header.game_info.map, 260),
-            event_date: fileTimeToDate(event.header.event_date),
-            message: truncate(
-              get_formatted_event_string(event) ??
-                `<invalid message string: ${event.header.event_name}>`,
-              2048
-            ),
-            categories: event.categories,
-          }));
-
-          await tx.datamine_event.createMany({
-            data: eventsData,
-            skipDuplicates: true,
-          });
-
-          const eventIndices = eventsData.map((e) => e.event_index);
-          if (eventIndices.length > 0) {
-            await tx.datamine_event_parameter.deleteMany({
-              where: {
-                session_id: session.id,
-                event_index: { in: eventIndices },
-              },
-            });
-          }
-
-          const allParameters = datamine.events.flatMap((event) =>
-            event.parameters
-              .filter((parameter) => parameter.name)
-              .map((parameter) => {
-                let numericValue: string | undefined;
-                let stringValue: string;
-
-                switch (parameter.parameter_type) {
-                  case e_datamine_parameter_type._datamine_parameter_type_long:
-                    if (parameter.value_long === undefined) {
-                      return null;
-                    }
-                    numericValue = parameter.value_long.toString();
-                    stringValue = parameter.value_long.toString();
-                    break;
-                  case e_datamine_parameter_type._datamine_parameter_type_int64:
-                    if (parameter.value_int64 === undefined) {
-                      return null;
-                    }
-                    numericValue = parameter.value_int64.toString();
-                    stringValue = parameter.value_int64.toString();
-                    break;
-                  case e_datamine_parameter_type._datamine_parameter_type_float:
-                    if (parameter.value_float === undefined) {
-                      return null;
-                    }
-                    numericValue = parameter.value_float.toString();
-                    stringValue = parameter.value_float.toString();
-                    break;
-                  case e_datamine_parameter_type._datamine_parameter_type_string:
-                    if (parameter.value_string === undefined) {
-                      return null;
-                    }
-                    stringValue = parameter.value_string.string;
-                    break;
-                  default:
-                    return null;
-                }
-
-                return {
-                  event_index: event.header.event_index,
-                  session_id: session.id,
-                  key: truncate(parameter.name, 128),
-                  type: convertParameterType(parameter.parameter_type),
-                  numeric_value: numericValue,
-                  string_value: stringValue,
-                };
-              })
-              .filter(
-                (param): param is NonNullable<typeof param> => param !== null
-              )
-          );
-
-          if (allParameters.length > 0) {
-            await tx.datamine_event_parameter.createMany({
-              data: allParameters,
-            });
-          }
-        },
-        {
-          maxWait: 10_000,
-          timeout: 30_000,
-        }
-      );
-    } catch (error) {
-      this.logger.error(
-        `Datamine DB push failed: ${error instanceof Error ? error.message : error}`
-      );
+      entries = await readZipEntries(upload);
+    } catch {
+      // Crash archives with a minidump are sent in ~1 MB parts, so the
+      // central directory can point past what arrived. The small text
+      // entries come first and are still complete.
+      entries = readLocalZipEntries(upload);
     }
-  }
+    const info = entries.get(CRASH_INFO_ENTRY)?.toString("utf8");
+    if (info === undefined) {
+      return false;
+    }
 
-  private saveParsedTxt(datamine: s_datamine_file): string {
-    const dir = DATAMINE_DIR;
-    mkdirSync(dir, { recursive: true });
-    const sessionPart = sanitizeFilename(
-      datamine.header.sessionid || "session"
+    event_warning(
+      'datamine: Crash report: session=%s halt=%s reason="%s" state=%s (%d files)',
+      crashInfoField(info, "session_id") ?? "?",
+      crashInfoField(info, "halt") ?? "?",
+      crashInfoField(info, "halt information") ?? "?",
+      crashInfoValue(info, "state") ?? "?",
+      entries.size
     );
-    const file = join(dir, `${sessionPart}.txt`);
-    const events = formatDatamineLogEvents(datamine.events);
-    if (existsSync(file)) {
-      appendFileSync(file, events);
-    } else {
-      writeFileSync(file, formatDatamineLogHeader(datamine.header) + events);
-    }
-    return file;
+    return true;
   }
 }

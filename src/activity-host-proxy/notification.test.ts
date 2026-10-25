@@ -1,6 +1,5 @@
-import { encode } from "@blamnetwork/rsat";
 import { describe, expect, it } from "vitest";
-import { JoinRequest } from "./join";
+import { encodeJoinRequest } from "./join";
 import { ActivityHostMessageType } from "./messages";
 import {
   ACTIVITY_HOST_NOTIFICATION_VARIANT,
@@ -12,20 +11,23 @@ import {
 } from "./notification";
 
 describe("activity host notification framing", () => {
-  it("reads the client join-request envelope from the FAH dump", () => {
-    const payload = Buffer.alloc(0xcd, 0xab);
-    payload.writeUInt32BE(0xb1e49c23, 0);
+  // Wire 8 (Xenia capture, 253-byte body): frame session, variant 1, kind 3,
+  // length 0xe8, a fourth word 0, then the join request.
+  it("reads the client join-request envelope", () => {
+    const payload = Buffer.alloc(0xe8, 0xab);
+    payload.writeUInt32BE(0x21_de_b1_00, 0);
 
     const body = Buffer.concat([
-      Buffer.from("00000000000000010100000003000000cd", "hex"),
+      Buffer.from("947aec531717dc140100000003000000e800000000", "hex"),
       payload,
     ]);
 
     const parsed = parseClientToActivityHostNotification(body);
-    expect(parsed?.sessionId).toBe(1n);
+    expect(parsed?.sessionId).toBe(0x94_7a_ec_53_17_17_dc_14n);
     expect(parsed?.variant).toBe(ACTIVITY_HOST_NOTIFICATION_VARIANT);
     expect(parsed?.kind).toBe(ActivityHostMessageType.JoinRequest);
-    expect(parsed?.payload.length).toBe(0xcd);
+    expect(parsed?.payload.length).toBe(0xe8);
+    expect(parsed?.payload.readUInt32BE(0)).toBe(0x21_de_b1_00);
   });
 
   it("builds the inner notification the client decoder expects", () => {
@@ -44,35 +46,25 @@ describe("activity host notification framing", () => {
     });
   });
 
-  it("wraps an 808044F1 join result as type 4", () => {
-    const request = encode(JoinRequest, {
-      nonce: 0xb1e49c23,
+  it("wraps a 80800A58 join result as type 4", () => {
+    const request = encodeJoinRequest({
+      nonce: 0xb1_e4_9c_23,
       sessionId: 1n,
-      identity: {
-        machine: Buffer.alloc(6),
-        player: Buffer.alloc(8),
-        account: 0x100000001n,
-        character: 0x200000002n,
-      },
-      auth: {
-        unk0: 0,
-        displayName: { chars: new Array(128).fill(0) },
-        unk2: 0n,
-        unk3: 0n,
-        unk4: 0n,
-        unk5: 0,
-        unk6: Buffer.alloc(6),
-      },
+      machine: Buffer.alloc(8),
+      player: Buffer.alloc(8),
+      account: 0x1_00_00_00_01n,
+      character: 0x2_00_00_00_02n,
     });
     const body = buildJoinResultNotification(1n, request);
     expect(body.readUInt32BE(9)).toBe(ActivityHostMessageType.JoinResult);
     expect(peekJoinRequest(request)).toEqual({
       nonce: 0xb1e49c23,
       activityHostId: 1n,
-      machine: Buffer.alloc(6),
+      machine: Buffer.alloc(8),
       player: Buffer.alloc(8),
       account: 0x100000001n,
       character: 0x200000002n,
+      identityUnknown4: 0n,
     });
     expect(body.length).toBeGreaterThan(17);
   });

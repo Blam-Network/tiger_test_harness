@@ -1,6 +1,7 @@
-/** BAP TCP endpoint (signon ticket fields 6/7). */
+// BAP TCP endpoint (signon ticket fields 6/7).
 
 export {
+  BAP_BIND_IP,
   BAP_SECURITY_TOKEN,
   BAP_SESSION_KEY_AES,
   BAP_SESSION_KEY_HMAC,

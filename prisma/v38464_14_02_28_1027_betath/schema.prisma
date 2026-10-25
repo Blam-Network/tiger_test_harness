@@ -1,0 +1,103 @@
+// Tiger's own database (accounts, characters, inventory).
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../src/generated/prisma/v38464_14_02_28_1027_betath"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("TIGER_DATABASE_URL")
+}
+
+// One row per platform account. The investment account soid is
+// derived from the row id: (soid type 1 << 32) | id.
+model account {
+  id          Int         @id @default(autoincrement())
+  // The XUID as decimal text: SQLite has no unsigned 64-bit integer, and its
+  // decimal type is a float that would round online XUIDs (above 2^53).
+  platform_id String      @unique
+  name        String
+  created_at  DateTime    @default(now())
+  characters  character[]
+  // 80801ABE account profile body (profile_set_account_profile, 701); unused.
+  profile     Bytes?
+}
+
+// Character soid = (soid type 2 << 32) | id. Customisation indices are the
+// investment globals option indices the client sends in
+// login_create_character (501); validated against the same tables.
+model character {
+  id                  Int              @id @default(autoincrement())
+  account_id          Int
+  account             account          @relation(fields: [account_id], references: [id], onDelete: Cascade)
+  name                String
+  class_index         Int
+  race_index          Int
+  gender_index        Int
+  face_index          Int
+  hair_index          Int
+  feature_index       Int
+  decal_index         Int
+  skin_color_index    Int
+  lip_color_index     Int
+  eye_color_index     Int
+  hair_color_index    Int
+  feature_color_index Int
+  decal_color_index   Int
+  personality_id      Int
+  helmet_preference   Int
+  level               Int              @default(1)
+  // XP of progression 12, the Guardian's level progression. The client
+  // derives the level from this.
+  progression_xp      Int              @default(0)
+  // XP of progression 0 (true name unknown): a one-time item-553 reward at
+  // 75 points, granted per kill through the pmap0 grant.
+  progression_zero_xp Int              @default(0)
+  // Cosmodrome prologue not started yet: the server sends character unlock
+  // flag 1871 while set so world state 23 launches it.
+  prologue_pending    Boolean          @default(false)
+  created_at          DateTime         @default(now())
+  last_played_at      DateTime?
+  deleted_at          DateTime?
+  items               character_item[]
+  // 808019F3 character profile body from profile_set_character_profile (702).
+  profile             Bytes?
+
+  @@index([account_id])
+}
+
+// Item soid = (soid type 3 << 32) | id. equip_slot null = in the bag.
+model character_item {
+  id              Int       @id @default(autoincrement())
+  character_id    Int
+  character       character @relation(fields: [character_id], references: [id], onDelete: Cascade)
+  def_index       Int
+  bucket          Int
+  equip_slot      Int?
+  bag_index       Int?
+  sandbox_pattern Int
+  art_arrangement Int
+  // False for currency / material stacks (vendor purchase entries with
+  // inst=0): never equipable, no 80801A25 item object, quantity is the bag
+  // entry's stack size instead.
+  instanced       Boolean   @default(true)
+  quantity        Int       @default(1)
+  // The item's own progression row (griddef+12, earned XP), the talent
+  // tree's level source.
+  talent_xp       Int       @default(0)
+  // 80801BF3: 50 u8 activated-step count per node, one byte per grid node.
+  // Null = all-zero (untouched grid), same as a fresh character.
+  talent_nodes    Bytes?
+  // Authored power level (vendor purchase entry runtime+24, key-0 stat slot
+  // value). Sent verbatim in the item's 808018F2 block; the client displays
+  // power = 10 + 10 * this. 0 for items with no authored power.
+  power           Int       @default(0)
+  // Instance level and quality (80801711 +0x18 / +0x20): the client's
+  // primary stat (Attack / Defense) is the stat curve of level + quality / 10
+  // (src/investment/primary-stat.ts). 0 = seed from the def's level block.
+  level           Int       @default(0)
+  quality         Int       @default(0)
+  created_at      DateTime  @default(now())
+
+  @@index([character_id])
+}

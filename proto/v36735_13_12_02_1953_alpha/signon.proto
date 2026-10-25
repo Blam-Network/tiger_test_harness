@@ -1,0 +1,51 @@
+syntax = "proto2";
+
+package destiny.v36735.signon;
+
+// Destiny 36735.13.12.02.1953.alpha XHTTP GET /signon. Request built by
+// sub_828B94E0, response parsed by sub_828B7FC0 ("Processing signon success
+// ticket from server").
+
+// Client to server body; XHTTP still stamps the Content-Type as
+// x-www-form-urlencoded.
+message SignonRequest {
+  optional uint32 id = 1;
+  // Xbox Live / identity token (cs_signon_token path)
+  optional bytes ticket = 2;
+  optional string language = 3;
+  optional bytes reserved4 = 4;
+  optional string version = 5;
+  optional string build = 6;
+  // True when the client accepts the EULA / newsletter prompt
+  optional bool accepted_prompt = 7;
+  optional bool reserved8 = 8;
+  optional string email = 11;
+  // Fixed buffer size 0xa8
+  optional bytes reserved12 = 12;
+  optional uint64 reserved13 = 13;
+  // Fixed buffer size 0x118
+  optional bytes reserved14 = 14;
+}
+
+message SuccessTicket {
+  // field 1: id region (16 bytes unused by parser)
+  required bytes id = 1;
+  // field 2: session key AES (len == 16) — BAP secure hello
+  required bytes session_key_aes = 2;
+  // field 3: session key HMAC (len == 16) — BAP secure hello
+  required bytes session_key_hmac = 3;
+  // field 4: security token (non-empty)
+  required bytes security_token = 4;
+  // field 5: uint64 @ ticket+576, possibly a time
+  required uint64 reserved5 = 5;
+  // field 6: BAP IPv4 (ticket endian; Xbox bswaps before use)
+  required uint32 bap_ipv4 = 6;
+  // field 7: BAP TCP port
+  required uint32 bap_port = 7;
+}
+
+message SignonResponse {
+  // 0 = success, 1 = queue, 3 = error
+  required uint32 type = 1;
+  required SuccessTicket success_ticket = 2;
+}

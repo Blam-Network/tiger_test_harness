@@ -6,16 +6,26 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+env:
+  # npm ci runs the prepare script; there are no hooks to install on a runner.
+  HUSKY: "0"
+
 jobs:
   validate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
+          submodules: recursive
 
-      - run: npm ci
+      - uses: ./.github/actions/setup
+
+      # The generated Prisma clients and protobuf code are gitignored.
+      - run: npm run prisma:generate
+      - run: npm run proto:generate
+
+      # Tests that read game data skip without packages (no .env.test here).
       - run: npm run validate
