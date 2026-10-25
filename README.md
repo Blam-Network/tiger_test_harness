@@ -10,6 +10,12 @@ Destiny (Tiger engine) test harness: a basic server for several Destiny builds, 
 
 **This is not a full Destiny server.** The investment system (gear, unlocks, drops, progression) is minimal, and outside the activity host most services answer with canned responses, kept in each service's `stubs/` folder. The project is heavily vibecoded and not meant for production or as a foundation. The mission scripting is the careful, regularly tested part: see [bullshcript](https://github.com/Blam-Network/tiger/tree/main/packages/bullshcript).
 
+## How To Use
+
+1. Download the latest release.
+2. Put the tiger_test_harness executable next to your destiny binary and run it.
+3. Configure your destiny client / emulator / whatever to use localhost.
+
 ## Builds
 One process serves one build, chosen by `TIGER_GAME_BUILD` (build string or folder name). The builds are listed in `src/builds.ts` (`e_build`); each service keeps its per-build code in `versions/<folder>/`.
 
