@@ -1,25 +1,26 @@
-export { e_server_message_network_id } from "./server-message";
-
-export const EMPTY_STRING_HASH = 0x811c9dc5;
-
-// Stub SOIDs until we mint real ones.
-export const LOCAL_INVESTMENT_ACCOUNT_SOID = 0x0000000100000001n;
-export const SIGNED_IN_CHARACTER_SOID = 0x0000000200000002n;
-export const UNIVERSE_ROOT_SOID = 0x7fffffffffffffffn;
-
-// investment_globals tag (+0x208 / +0x20C); client rejects mismatches.
-export const SCHEMA_CHECKSUM = 0x413b9657;
-export const CONTENT_CHECKSUM = 0x7e9908f6;
-
-// TypeDef descriptor +4 checksums (queuez object headers).
-export const SELECT_CHARACTER_CHECKSUM_PRIMARY = 0x0aa5f881;
-export const SELECT_CHARACTER_CHECKSUM_CHARACTER = 0x3412a58d;
-export const PEER_CHECKSUM_PRIMARY = 0x17edea80;
-export const PEER_CHECKSUM_CHARACTER = 0x5f9decd9;
-export const INSPECTION_CHECKSUM_PRIMARY = 0xe56d2ea1;
-export const INSPECTION_CHECKSUM_CHARACTER = 0x74d6d27c;
-export const ROSTER_CHECKSUM_PRIMARY = 0xf354c32a;
-export const UNIVERSE_CHECKSUM = 0x7e4e624e;
-export const SELF_CHECKSUM_PRIMARY = 0xa9f02ea4;
-export const SELF_CHECKSUM_INVENTORY = 0xd78a7055;
-export const SELF_CHECKSUM_ITEM = 0x24390bf3;
+// The network ids of the server messages the build-neutral code routes on. A
+// message has the same id in every build that has it; each build's own table
+// (versions/<build>/server-message-ids.ts) is checked against these.
+export enum e_server_message_network_id {
+  _server_message_network_id_director_enter_orbit = 104,
+  _server_message_network_id_director_complete_bink_activity = 105,
+  _server_message_network_id_fetch_universe = 205,
+  _server_message_network_id_fetch_family = 206,
+  _server_message_network_id_inventory_destroy_item = 401,
+  _server_message_network_id_inventory_perform_item_action = 402,
+  _server_message_network_id_inventory_equip_item = 403,
+  _server_message_network_id_inventory_unequip_item = 404,
+  _server_message_network_id_login_create_character = 501,
+  _server_message_network_id_login_delete_character = 502,
+  _server_message_network_id_login_account = 503,
+  _server_message_network_id_login_character = 504,
+  _server_message_network_id_signout_character = 505,
+  _server_message_network_id_loot_pickup_item = 601,
+  _server_message_network_id_profile_set_account_profile = 701,
+  _server_message_network_id_profile_set_character_profile = 702,
+  _server_message_network_id_talent_grid_activate_step = 801,
+  _server_message_network_id_talent_grid_binary_swap = 802,
+  _server_message_network_id_vendor_buy_item = 901,
+  _server_message_network_id_vendor_sell_item = 903,
+  _server_message_network_id_activity_host_get_activity_host_startup_options = 1303,
+}

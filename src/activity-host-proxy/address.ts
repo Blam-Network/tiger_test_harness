@@ -1,12 +1,12 @@
 import { c } from "@craftycodie/cstruct";
 import { cstructIPv4 } from "../lib/cstruct";
 
-/** 8-byte request: activity-host id the client wants resolved. */
+// 8-byte request: activity-host id the client wants resolved.
 const GetActivityHostProxyRequest = c.struct({
   activityHostId: c.u64(),
 });
 
-/** 16-byte response. Client decoder (sub_82B7EA80) copies this verbatim. */
+// 16-byte response. The client copies this verbatim.
 const GetActivityHostProxyResponse = c.struct({
   activityHostId: c.u64(),
   ipv4: cstructIPv4({ padAfter: 2 }),

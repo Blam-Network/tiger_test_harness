@@ -1,0 +1,13 @@
+syntax = "proto2";
+
+package destiny.v40662.bap;
+
+// client_to_xetrov_notification (BAP 0xAB, 0x9A03E0). Same envelope as the
+// Xbox builds; the event payload layout is not dumped for this build yet.
+message ClientToXetrovNotification {
+  required uint32 reserved1 = 1;
+  required uint32 reserved2 = 2;
+  optional uint64 reserved3 = 3;
+  // up to 145024 bytes
+  required bytes event = 4;
+}

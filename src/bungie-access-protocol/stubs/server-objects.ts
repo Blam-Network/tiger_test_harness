@@ -1,0 +1,2 @@
+export const LOCAL_INVESTMENT_ACCOUNT_SOID = 0x0000000100000001n;
+export const UNIVERSE_ROOT_SOID = 0x7fffffffffffffffn;

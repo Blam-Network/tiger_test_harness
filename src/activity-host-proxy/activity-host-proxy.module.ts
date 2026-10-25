@@ -1,7 +1,5 @@
 import { Module } from "@nestjs/common";
-import { ILoggerSymbol } from "../ILogger";
-import { ShutdownObserver } from "../ShutdownObserver";
-import { loggerWithPrefix } from "../utils/logger";
+import { ShutdownObserver } from "../shutdown-observer";
 import { ActivityHostManager } from "./activity-host-manager";
 import { ActivityHostProxyServerService } from "./activity-host-proxy-server.service";
 
@@ -9,9 +7,8 @@ import { ActivityHostProxyServerService } from "./activity-host-proxy-server.ser
   providers: [
     ActivityHostManager,
     ActivityHostProxyServerService,
-    loggerWithPrefix("ActivityHostProxy"),
     ShutdownObserver,
   ],
-  exports: [ActivityHostProxyServerService, ILoggerSymbol, ShutdownObserver],
+  exports: [ActivityHostProxyServerService, ShutdownObserver],
 })
 export class ActivityHostProxyModule {}

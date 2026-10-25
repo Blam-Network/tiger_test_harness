@@ -1,18 +1,16 @@
-import { create, toBinary } from "@bufbuild/protobuf";
-import { ClientConfigResponseSchema } from "../generated/client_config_pb";
+import { bapBuild } from "./versions";
 
-/** Guest decoder requires ≥24 bytes; trailing zeros are fine (tag 0 ends the scan). */
+// The client decoder requires at least 24 bytes; trailing zeros are fine (tag 0
+// ends the scan).
 const CLIENT_CONFIG_RESPONSE_MIN_BYTES = 24;
 
 export function buildClientConfigResponseBody(
   cookie = 1n,
   socialMatchmakingId = 0
 ): Buffer {
-  const message = create(ClientConfigResponseSchema, {
-    cookie,
-    socialMatchmakingId,
-  });
-  const pb = Buffer.from(toBinary(ClientConfigResponseSchema, message));
+  const pb = Buffer.from(
+    bapBuild().encodeClientConfigResponse(cookie, socialMatchmakingId)
+  );
   if (pb.length >= CLIENT_CONFIG_RESPONSE_MIN_BYTES) {
     return pb;
   }

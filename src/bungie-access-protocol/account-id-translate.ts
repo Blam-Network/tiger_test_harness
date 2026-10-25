@@ -1,49 +1,37 @@
-import { c } from "@craftycodie/cstruct";
+import type { PlatformAccount } from "./versions/bap-build";
 
-/** Request header: count + reserved u16 (ids follow). */
-const AccountIdTranslateRequestHeader = c.struct({
-  count: c.u16(),
-  reserved: c.u16(),
-});
+// Account id translation (BAP 0x17/0x18), big endian. Request: u16 count, u16
+// reserved, then count platform ids. Response: u16 count, u8 account type,
+// u8 0xFF, the platform ids again, then an investment account soid for each.
+// A platform id is the build's own bytes: an 8-byte id on the Xbox 360, the
+// 36-byte PSN account nest on the PS4 (as login_account carries it).
 
-export function parseAccountIdTranslateRequest(body: Buffer): bigint[] {
+export function parseAccountIdTranslateRequest(
+  body: Buffer,
+  account: PlatformAccount
+): Buffer[] {
   if (body.length < 4) {
     return [];
   }
-  const header = c.read(AccountIdTranslateRequestHeader, body, "big");
-  const max = Math.floor((body.length - 4) / 8);
-  const n = Math.min(header.count >>> 0, max);
-  if (n <= 0) {
-    return [];
-  }
-  const AccountIdTranslateRequestIds = c.struct({
-    platformIds: c.array(c.u64(), n),
-  });
-  return c.read(AccountIdTranslateRequestIds, body, 4, "big").platformIds;
+  const max = Math.floor((body.length - 4) / account.idBytes);
+  const count = Math.min(body.readUInt16BE(0), max);
+  return Array.from({ length: count }, (_, i) =>
+    body.subarray(4 + i * account.idBytes, 4 + (i + 1) * account.idBytes)
+  );
 }
 
 export function buildAccountIdTranslateResponse(
-  platformIds: readonly bigint[],
-  investmentSoid: bigint
+  platformIds: readonly Buffer[],
+  investmentSoid: bigint,
+  account: PlatformAccount
 ): Buffer {
-  const n = platformIds.length;
-  const AccountIdTranslateResponse = c.struct({
-    count: c.u16(),
-    // Seem to be magic values (encode: sub_82B7FB48; decode assert: sub_82B7FED0 via sub_82B7F798).
-    unknown02: c.u8(), // v4nguard reckon this might be an account ID type (PS3 PSN = 7, Steam = 12)
-    unknown03: c.u8(),
-    platformIds: c.array(c.u64(), n),
-    investmentSoids: c.array(c.u64(), n),
-  });
-  return c.write(
-    AccountIdTranslateResponse,
-    {
-      count: n,
-      unknown02: 1, // Xbox 360 I guess???
-      unknown03: 0xff,
-      platformIds: [...platformIds],
-      investmentSoids: Array.from({ length: n }, () => investmentSoid),
-    },
-    "big"
-  );
+  const head = Buffer.alloc(4);
+  head.writeUInt16BE(platformIds.length, 0);
+  head[2] = account.type;
+  head[3] = 0xff;
+  const soids = Buffer.alloc(8 * platformIds.length);
+  for (let i = 0; i < platformIds.length; i++) {
+    soids.writeBigUInt64BE(investmentSoid, i * 8);
+  }
+  return Buffer.concat([head, ...platformIds, soids]);
 }

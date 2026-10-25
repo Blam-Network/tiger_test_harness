@@ -1,85 +1,349 @@
-import * as crypto from "node:crypto";
 import type * as net from "node:net";
+import type { KillFilterDetails } from "@blamnetwork/bullshcript/destiny1/common";
 import {
-  BungieCodec,
-  type RawBapMessage,
-} from "../bungie-access-protocol/codec";
+  event_error,
+  event_message,
+  event_status,
+  event_verbose,
+  event_warning,
+} from "@blamnetwork/datamine";
+import { activityBundles, activityPrivate } from "../content";
+import { activityName as activityNameForId } from "../content/activities";
 import {
-  BAP_SESSION_KEY_AES,
-  BAP_SESSION_KEY_HMAC,
-} from "../bungie-access-protocol/config";
+  describeDebugToggles,
+  readDebugToggles,
+} from "../dev-config/debug-toggles";
 import {
-  BapMessageType,
-  bapMessageTypeName,
-} from "../bungie-access-protocol/constants";
-import type ILogger from "../ILogger";
-import type { ActivityHostKind } from "./activity-host";
+  type ChannelEnd,
+  handleChannelStartup,
+  handleSecureHello,
+} from "../lib/bap-wire/channel";
+import { BungieCodec, type RawBapMessage } from "../lib/bap-wire/codec";
+import { BapMessageType, bapMessageTypeName } from "../lib/bap-wire/constants";
+import type { ActivityHostKind, ActivityHostService } from "./activity-host";
 import { ActivityHostManager } from "./activity-host-manager";
-import { activityNameForId } from "./activity-id";
+import {
+  type ActivityInstance,
+  activityInstanceFor,
+  activityTicksSince,
+  findActivityInstance,
+} from "./activity-instance";
+import { EntitySlots } from "./entity-slots";
+import { hexPreview } from "./hex-preview";
 import type { AhClientIdentity } from "./join";
 import {
   ActivityHostMessageType,
   activityHostMessageTypeName,
   isActivityHostMessageType,
 } from "./messages";
+import type { IncidentPosition } from "./mission/incident";
 import {
   buildActivityHostToClientNotification,
   buildJoinResultNotification,
+  type ParsedActivityHostNotification,
   parseClientToActivityHostNotification,
   peekJoinRequest,
 } from "./notification";
 import {
-  buildGlobalActivityStateRsat,
-  buildReplicateMembershipRsat,
-  buildSensorAuthTickRsat,
-  buildTowerSensorAuthRsat,
-  buildWorldGlobalsStateRsat,
-  parseStateRefreshSlice,
-  playerKeyFromCharacter,
+  anonymousHosts,
+  type BoundHosts,
+  type HostSession,
+  type PlayerHosts,
+} from "./player-hosts";
+import { RegionCrossing, servesBubble } from "./region-crossing";
+import {
+  parseRequestScriptUpdates,
+  parseStateRefresh,
+  type SensorAuthSenseEntry,
+  unpackBubbleStateHandle,
+  withoutSenseRows,
 } from "./rsat";
+import type { StateRefresh } from "./rsat/client-reports";
 import { scenarioClient } from "./scenario-client";
+import { SessionScriptHost } from "./script-host/session-host";
+import type { SessionContext } from "./session-context";
+import {
+  handleAllocateEntityIndices,
+  handleFreeEntityIndices,
+  pushEntityIndexGrant,
+} from "./session-entity-indices";
+import { phaseHash, pushActivityGlobals } from "./session-globals";
+import { Keepalive } from "./session-keepalive";
+import { MembershipPushes } from "./session-membership";
+import { SensorAuthPushes } from "./session-sensor-auth";
+import type { ParsedStartRequest } from "./start-request";
 
-/**
- * TCP session for the activity host proxy.
- */
-export class ActivityHostProxySession {
+// Bytes of a first-message dump per event.
+const FIRST_DUMP_CHUNK_BYTES = 800;
+
+// Every connected AH proxy session, for the script debugger (src/debug/).
+const liveSessions = new Set<ActivityHostProxySession>();
+
+export function liveAhSessions(): readonly ActivityHostProxySession[] {
+  return [...liveSessions];
+}
+
+function notificationKindName(kind: number): string {
+  return isActivityHostMessageType(kind)
+    ? activityHostMessageTypeName(kind)
+    : `ah_${kind}`;
+}
+
+// TCP session for the activity host proxy.
+export class ActivityHostProxySession implements HostSession, SessionContext {
+  private readonly remote: string;
   private readonly codec = new BungieCodec();
   private buffer = Buffer.alloc(0);
-  private closed = false;
+  closed = false;
   private notifySeq = 0;
-  // TOWERSPAWN TODO: Clean these up, move the ones we need into AH
   private activityStateSent = false;
-  private sensorAuthGranted = false;
-  private membershipPushes = 0;
-  private membershipGeneration = 0;
-  private joinIdentity: AhClientIdentity | undefined;
-  private keepalive: ReturnType<typeof setInterval> | undefined;
-  // in-world time
-  private activityClockStarted = 0;
-  private currentSlice: number | undefined;
+  // The FAH session id the pushes are addressed to (set by the first join
+  // state or membership push).
+  boundSessionId: bigint | undefined;
+  joinIdentity: AhClientIdentity | undefined;
+  // Start of the activity clock this socket has sent ticks from: its own
+  // until the activity is known, then the instance's (see activityTicks).
+  private activityClockStarted: number | undefined;
+  // The client has entered its world (the refresh after its world
+  // transition was answered with the world's apply).
+  worldEntered = false;
+  private readonly seenClientKinds = new Set<number>();
+  private lastRefreshMembership: number | undefined;
 
-  // TOWERSPAWN TODO: WHY DOES THE PROXY HAVE A KIND?
-  readonly kind: ActivityHostKind;
+  // Where the client is in the world and the crossing it is making.
+  readonly crossing: RegionCrossing;
+  // The entity slot handoff at a swap.
+  readonly entitySlots: EntitySlots;
+  // The activity's script host and what feeds it.
+  readonly scripts: SessionScriptHost;
+  private readonly sensorAuth: SensorAuthPushes;
+  private readonly membership: MembershipPushes;
+  private readonly keepalive: Keepalive;
+
+  // The player's hosts and which of them this connection is (FAH or GAH).
+  // Set by the manager start request, the first message that identifies
+  // the player (secure hello -> manager start -> join, always in that
+  // order in captures); until then the connection has no player.
+  private bound: BoundHosts | undefined;
 
   constructor(
     private readonly socket: net.Socket,
-    private readonly logger: ILogger,
     private readonly manager: ActivityHostManager
   ) {
-    this.kind = this.manager.bindSession();
+    this.crossing = new RegionCrossing({
+      activityName: () => this.activityName(),
+      boundSessionId: () => this.boundSessionId,
+      flushClaims: (sessionId) => this.entitySlots.flushClaims(sessionId),
+      hosts: () => this.hosts,
+      joinIdentity: () => this.joinIdentity,
+      membershipPushes: () => this.membership.pushCount,
+      noteHardWipe: (report) => this.scripts.noteHardWipe(report),
+      phaseHash: (activityName) => phaseHash(this, activityName),
+      pushApply: (sessionId, activityName, bubble, worldEntry) =>
+        this.sensorAuth.pushApply(sessionId, activityName, bubble, worldEntry),
+      pushMembership: (sessionId, force) =>
+        this.membership.push(sessionId, force),
+      pushSensorAuthApply: (sessionId, slice) =>
+        this.sensorAuth.pushRowlessApply(sessionId, slice),
+      pushSensorAuthPromote: (sessionId) =>
+        this.sensorAuth.pushPromote(sessionId),
+      retired: () => this.retired,
+      worldEntered: () => this.worldEntered,
+    });
+    this.entitySlots = new EntitySlots({
+      hasPendingRegion: () => this.crossing.pendingRegion !== undefined,
+      onHandoffComplete: (sessionId, reason) =>
+        this.completeSlotHandoff(sessionId, reason),
+      push: (sessionId, kind, body, label) =>
+        this.pushAh(sessionId, kind, body, label),
+    });
+    this.scripts = new SessionScriptHost({
+      activityName: () => this.activityName(),
+      activityTicks: () => this.activityTicks(),
+      hosts: () => this.hosts,
+      joinIdentity: () => this.joinIdentity,
+      kind: () => this.kind,
+      moveToPhaseStart: (activityName, phaseIndex) =>
+        this.crossing.teleportToPhaseStart(activityName, phaseIndex),
+      noteInstanceSpawned: () => this.membership.noteSpawned(),
+      playerRows: (activityName, ownKey) =>
+        this.sensorAuth.playerRows(activityName, ownKey),
+      position: () => ({
+        bubble: this.crossing.clientBubble ?? this.crossing.currentSlice,
+        state: this.crossing.currentBubbleState,
+      }),
+      pushMembership: () => {
+        if (this.boundSessionId !== undefined) {
+          this.membership.push(this.boundSessionId, true);
+        }
+      },
+      session: () => this,
+      stepTeleport: (activityName) => this.crossing.stepTeleport(activityName),
+      teleporting: (activityName) => this.crossing.teleporting(activityName),
+      worldEntered: () => this.worldEntered,
+    });
+    this.sensorAuth = new SensorAuthPushes(this);
+    this.membership = new MembershipPushes(this);
+    this.keepalive = new Keepalive(this, this.sensorAuth, this.membership);
+
     const remote = `${socket.remoteAddress}:${socket.remotePort}`;
-    this.logger.log(`AH proxy client connected ${remote} (${this.kind})`);
+    this.remote = remote;
+    liveSessions.add(this);
+    event_message("activities:host: client connected %s", remote);
 
     socket.on("data", (chunk) => this.onData(chunk));
     socket.on("error", (err) => {
-      this.logger.warn(`AH proxy socket error ${remote}: ${err.message}`);
+      event_warning(
+        "activities:host: socket error %s: %s",
+        remote,
+        err.message
+      );
     });
     socket.on("close", () => {
       this.closed = true;
-      this.manager.unbindSession(this.kind);
-      this.stopKeepalive();
-      this.logger.log(`AH proxy client disconnected ${remote}`);
+      liveSessions.delete(this);
+      if (this.bound) {
+        if (this.bound.kind === "FAH") {
+          this.hosts.pah.setFlushHook(null);
+          this.hosts.pah.reset();
+        }
+        this.hosts.setSession(this.bound.kind, undefined, this.bound.host);
+        this.hosts.unbind(this.bound.kind, this.bound.host);
+      }
+      this.membership.leave();
+      this.keepalive.stop();
+      this.entitySlots.dispose();
+      event_message("activities:host: client disconnected %s", remote);
     });
+  }
+
+  get hosts(): PlayerHosts {
+    return this.bound?.hosts ?? anonymousHosts;
+  }
+
+  get kind(): ActivityHostKind {
+    return this.bound?.kind ?? "FAH";
+  }
+
+  get activityHost(): ActivityHostService {
+    return this.bound?.host ?? this.hosts.host(this.kind);
+  }
+
+  get retired(): boolean {
+    return (
+      this.bound?.kind === "GAH" && this.hosts.isRetiredHost(this.bound.host)
+    );
+  }
+
+  get isPendingTarget(): boolean {
+    return this.bound?.host === this.hosts.pendingGah;
+  }
+
+  activityName(): string | undefined {
+    const start = this.hosts.getStartRequest();
+    return start === undefined
+      ? undefined
+      : activityNameForId(start.activityId);
+  }
+
+  // The activity clock in 30 Hz ticks. 0 stalls combatant placement; the
+  // visual time of day is the GAS worldServerTime, not this.
+  //
+  // Once the activity is known this is the instance's clock, shared by the
+  // FAH, the GAH and the script host, so a stamp the host writes is in the
+  // same base as the ticks the world reading it gets. Our own start goes to
+  // the instance first, and the earlier of the two wins, so switching over
+  // never sends a world less than it has already seen.
+  activityTicks(now = Date.now()): number {
+    this.activityClockStarted ??= now;
+    const activityName = this.activityName();
+    if (!activityName) {
+      return activityTicksSince(this.activityClockStarted, now);
+    }
+    const instance = activityInstanceFor(activityName, this.hosts);
+    this.activityClockStarted = instance.noteClockStart(
+      this.activityClockStarted
+    );
+    return instance.activityTicks(now);
+  }
+
+  pushAh(
+    sessionId: bigint,
+    kind: ActivityHostMessageType,
+    rsatPayload: Buffer,
+    label: string,
+    opts: { keepRows?: boolean } = {}
+  ): void {
+    let payload = rsatPayload;
+    let note = label;
+    if (
+      kind === ActivityHostMessageType.SensorAuthUpdate &&
+      payload.length > 5 &&
+      !(opts.keepRows || readDebugToggles().toggles.senseRows)
+    ) {
+      payload = withoutSenseRows(payload);
+      note += ` (rows dropped, ${payload.length}B sent)`;
+    }
+    const body = buildActivityHostToClientNotification(
+      sessionId,
+      kind,
+      payload
+    );
+    const seq = this.notifySeq++ >>> 0;
+    this.send({
+      msgType: BapMessageType.ActivityHostToClientNotification,
+      sequence: seq,
+      body,
+      activityHostId: sessionId,
+    });
+    event_verbose(
+      "activities:host: %s (seq %x, ah=0x%I64x)",
+      note,
+      seq,
+      sessionId
+    );
+  }
+
+  // First start request binds the connection to the player's hosts; later
+  // ones on the same connection keep the binding. A non-start manager
+  // request before any start is answered from the anonymous hosts without
+  // binding (never seen in captures).
+  private bindHosts(start: ParsedStartRequest | undefined): BoundHosts {
+    if (this.bound) {
+      return this.bound;
+    }
+    if (!start) {
+      event_warning(
+        "activities:host: manager request before start request, unbound reply"
+      );
+      return { host: anonymousHosts.fah, hosts: anonymousHosts, kind: "FAH" };
+    }
+    const hosts = this.manager.hostsForStartRequest(start);
+    const { host, kind } = hosts.bindHost();
+    const bound = { host, hosts, kind };
+    this.bound = bound;
+    hosts.setSession(kind, this, host);
+    event_message(
+      "activities:host: bound %s ah=0x%I64x%s",
+      kind,
+      host.id,
+      host === hosts.pendingGah ? " (pending public host)" : ""
+    );
+    if (kind === "FAH") {
+      hosts.pah.reset();
+      hosts.pah.setFlushHook(() => {
+        if (this.closed || this.boundSessionId === undefined) {
+          return;
+        }
+        event_message(
+          "activities:host: PAH revoke flush opcode=%s token=%s",
+          hosts.pah.currentAmbassador(),
+          hosts.pah.currentRevokeToken()
+        );
+        this.membership.push(this.boundSessionId, true);
+      });
+    }
+    return bound;
   }
 
   private onData(chunk: Buffer): void {
@@ -101,25 +365,28 @@ export class ActivityHostProxySession {
         }
       }
     } catch (error) {
-      this.logger.error(
-        `AH proxy frame error: ${error instanceof Error ? error.message : String(error)}`
+      event_error(
+        "activities:host: frame error: %s",
+        error instanceof Error ? error.message : String(error)
       );
       this.socket.destroy();
     }
   }
 
   private handleMessage(message: RawBapMessage): void {
-    this.logger.log(
-      `AH proxy ← ${bapMessageTypeName(message.msgType)} seq=${message.sequence} ` +
-        `body=${message.body.length}b`
+    event_status(
+      "activities:host: ← %s seq=%u body=%db",
+      bapMessageTypeName(message.msgType),
+      message.sequence,
+      message.body.length
     );
 
     switch (message.msgType) {
       case BapMessageType.ClientToBapChannelStartupRequest:
-        this.handleChannelStartup(message);
+        handleChannelStartup(this.channelEnd, message);
         break;
       case BapMessageType.ClientToBapSecureHelloRequest:
-        this.handleSecureHello(message);
+        handleSecureHello(this.channelEnd, message);
         break;
       case BapMessageType.ClientToBapEchoRequest:
         this.handleStatusOnlyReply(
@@ -135,73 +402,27 @@ export class ActivityHostProxySession {
         this.handleActivityHostNotification(message);
         break;
       default:
-        this.logger.warn(
-          `AH proxy unhandled ${bapMessageTypeName(message.msgType)} ` +
-            `seq=${message.sequence} body=${hexPreview(message.body)}`
+        event_warning(
+          "activities:host: unhandled %s seq=%u body=%s",
+          bapMessageTypeName(message.msgType),
+          message.sequence,
+          hexPreview(message.body)
         );
         break;
     }
   }
 
-  private handleChannelStartup(message: RawBapMessage): void {
-    const CHANNEL_MAGIC = Buffer.from("DESTINY\x01", "ascii");
-
-    if (
-      message.body.length < 8 ||
-      !message.body.subarray(0, 8).equals(CHANNEL_MAGIC)
-    ) {
-      this.logger.warn(
-        `AH proxy channel startup magic mismatch (${message.body.length} bytes)`
-      );
-    }
-
-    const seed = crypto.randomBytes(120);
-    const body = Buffer.concat([CHANNEL_MAGIC, seed]);
-    this.send({
-      msgType: BapMessageType.ClientToBapChannelStartupResponse,
-      sequence: message.sequence,
-      body,
-    });
-    this.logger.log("AH proxy channel startup complete");
-  }
-
-  private handleSecureHello(message: RawBapMessage): void {
-    const gcmKey = crypto.randomBytes(16);
-    const gcmIv = crypto.randomBytes(12);
-    const cbcNonce = Buffer.alloc(16, 0);
-
-    const dataRaw = Buffer.concat([gcmIv, gcmKey]);
-    const dataEncrypted = aes128CbcEncrypt(
-      BAP_SESSION_KEY_AES,
-      cbcNonce,
-      dataRaw
-    );
-
-    const payloadCore = Buffer.alloc(
-      4 + cbcNonce.length + dataEncrypted.length
-    );
-    payloadCore.writeUInt32BE(0x50, 0);
-    cbcNonce.copy(payloadCore, 4);
-    dataEncrypted.copy(payloadCore, 4 + cbcNonce.length);
-
-    const tag = crypto
-      .createHmac("sha256", BAP_SESSION_KEY_HMAC)
-      .update(payloadCore)
-      .digest();
-
-    const payload = Buffer.concat([payloadCore, tag]);
-    this.send({
-      msgType: BapMessageType.ClientToBapSecureHelloResponse,
-      sequence: message.sequence,
-      body: payload,
-    });
-
-    this.codec.enableEncryption(gcmKey, gcmIv);
-    this.logger.log("AH proxy secure hello complete — GCM enabled");
+  // What the shared channel handshake (channel.ts) needs from this session.
+  private get channelEnd(): ChannelEnd {
+    return {
+      category: "activities:host:",
+      codec: this.codec,
+      send: (message) => this.send(message),
+    };
   }
 
   private handleActivityHostManager(message: RawBapMessage): void {
-    const body = this.manager.handle(message, this.kind);
+    const body = this.manager.handle(message, (start) => this.bindHosts(start));
     if (!body) {
       return;
     }
@@ -213,71 +434,154 @@ export class ActivityHostProxySession {
   }
 
   private handleActivityHostNotification(message: RawBapMessage): void {
+    if (!this.bound) {
+      event_warning(
+        "activities:host: notification before start request dropped (%dB)",
+        message.body.length
+      );
+      return;
+    }
     const parsed = parseClientToActivityHostNotification(message.body);
     if (!parsed) {
-      this.logger.warn(
-        `AH proxy notification too short (${message.body.length}B) ` +
-          `body=${hexPreview(message.body)}`
+      event_warning(
+        "activities:host: notification too short (%dB) body=%s",
+        message.body.length,
+        hexPreview(message.body)
       );
       return;
     }
+    this.logFirstOfKind(parsed);
+    const { kind, payload, sessionId } = parsed;
+    switch (kind) {
+      // The client sends the keepalive request (15) itself, after the join
+      // result's keepalive interval with nothing else sent; the host never
+      // answers it.
+      case ActivityHostMessageType.SendClientHeartbeat:
+      case ActivityHostMessageType.ActivityClientKeepaliveRequest:
+      case ActivityHostMessageType.ActivityClientKeepaliveResponse:
+      case ActivityHostMessageType.MembershipAcknowledgement:
+        break;
+      case ActivityHostMessageType.ActivityClientRequestStateRefresh:
+        this.handleStateRefresh(sessionId, payload);
+        break;
+      case ActivityHostMessageType.ClientAuthoritativeDataUpdate:
+        this.crossing.handleClientAuth(sessionId, payload);
+        break;
+      case ActivityHostMessageType.AbandonEntitySlots:
+      case ActivityHostMessageType.AbdicateAuthority:
+      case ActivityHostMessageType.RequestPurgeEntitySlots:
+        this.entitySlots.handle(sessionId, kind, payload);
+        break;
+      case ActivityHostMessageType.PeerLeaveRequest:
+        event_message(
+          "activities:host: peer_leave absorbed session=0x%I64x payload=%s",
+          sessionId,
+          hexPreview(payload)
+        );
+        break;
+      case ActivityHostMessageType.FreeEntityIndices:
+        handleFreeEntityIndices(this, sessionId, payload);
+        break;
+      case ActivityHostMessageType.AllocateEntityIndices:
+        handleAllocateEntityIndices(this, sessionId, payload);
+        break;
+      case ActivityHostMessageType.SensorSenseUpdate:
+        this.handleSensorSense(parsed);
+        break;
+      case ActivityHostMessageType.RequestScriptUpdates:
+        this.absorbRequestScriptUpdates(parsed);
+        break;
+      case ActivityHostMessageType.ScriptState:
+      case ActivityHostMessageType.ScriptEvent:
+        this.absorbScriptMessage(parsed);
+        break;
+      case ActivityHostMessageType.Incident:
+        this.scripts.handleIncident(sessionId, payload);
+        break;
+      case ActivityHostMessageType.JoinRequest:
+        this.handleJoinRequest(parsed);
+        break;
+      default:
+        event_warning(
+          "activities:host: unhandled %s session=0x%I64x variant=%s payload=%s",
+          notificationKindName(kind),
+          sessionId,
+          parsed.variant,
+          hexPreview(payload)
+        );
+        break;
+    }
+  }
 
-    const kindName = isActivityHostMessageType(parsed.kind)
-      ? activityHostMessageTypeName(parsed.kind)
-      : `ah_${parsed.kind}`;
-    if (
-      parsed.kind === ActivityHostMessageType.SendClientHeartbeat ||
-      parsed.kind === ActivityHostMessageType.ActivityClientKeepaliveRequest ||
-      parsed.kind === ActivityHostMessageType.ActivityClientKeepaliveResponse ||
-      parsed.kind === ActivityHostMessageType.MembershipAcknowledgement
-    ) {
+  // The first message of each class is logged whole (up to 2 KB) for decoding
+  // against the schemas.
+  private logFirstOfKind(parsed: ParsedActivityHostNotification): void {
+    if (this.seenClientKinds.has(parsed.kind)) {
       return;
     }
-    if (
-      parsed.kind === ActivityHostMessageType.ActivityClientRequestStateRefresh
-    ) {
-      this.handleStateRefresh(parsed.sessionId, parsed.payload);
-      return;
-    }
-    if (parsed.kind === ActivityHostMessageType.ClientAuthoritativeDataUpdate) {
-      this.handleClientAuth(parsed.sessionId, parsed.payload);
-      return;
-    }
-    if (
-      parsed.kind === ActivityHostMessageType.AbandonEntitySlots ||
-      parsed.kind === ActivityHostMessageType.AbdicateAuthority ||
-      parsed.kind === ActivityHostMessageType.RequestPurgeEntitySlots
-    ) {
-      this.logger.log(
-        `AH proxy ${kindName} absorbed session=0x${parsed.sessionId.toString(16)} ` +
-          `payload=${hexPreview(parsed.payload)}`
+    this.seenClientKinds.add(parsed.kind);
+    // An event's text holds about 2 KB, so the dump goes out in pieces.
+    const dump = parsed.payload.subarray(0, 2048);
+    for (let at = 0; at < dump.length; at += FIRST_DUMP_CHUNK_BYTES) {
+      event_message(
+        "activities:host: first %s %dB hex@%d=%s",
+        notificationKindName(parsed.kind),
+        parsed.payload.length,
+        at,
+        dump.subarray(at, at + FIRST_DUMP_CHUNK_BYTES).toString("hex")
       );
-      return;
     }
-    if (parsed.kind === ActivityHostMessageType.PeerLeaveRequest) {
-      this.logger.log(
-        `AH proxy peer_leave absorbed session=0x${parsed.sessionId.toString(16)} ` +
-          `payload=${hexPreview(parsed.payload)}`
-      );
-      return;
-    }
-    if (parsed.kind === ActivityHostMessageType.FreeEntityIndices) {
-      this.handleFreeEntityIndices(parsed.sessionId, parsed.payload);
-      return;
-    }
-    if (parsed.kind === ActivityHostMessageType.AllocateEntityIndices) {
-      this.handleAllocateEntityIndices(parsed.sessionId, parsed.payload);
-      return;
-    }
-    if (parsed.kind !== ActivityHostMessageType.JoinRequest) {
-      this.logger.warn(
-        `AH proxy unhandled ${kindName} ` +
-          `session=0x${parsed.sessionId.toString(16)} ` +
-          `variant=${parsed.variant} payload=${hexPreview(parsed.payload)}`
-      );
-      return;
-    }
+  }
 
+  private handleSensorSense(parsed: ParsedActivityHostNotification): void {
+    const activity = this.activityName();
+    if (activity && activityBundles(activity)) {
+      this.scripts.handleSensorSense(
+        parsed.sessionId,
+        activity,
+        parsed.payload
+      );
+      return;
+    }
+    event_message(
+      "activities:host: sensor_sense_update absorbed session=0x%I64x variant=%s payload=%dB",
+      parsed.sessionId,
+      parsed.variant,
+      parsed.payload.length
+    );
+  }
+
+  private absorbRequestScriptUpdates(
+    parsed: ParsedActivityHostNotification
+  ): void {
+    const req = parseRequestScriptUpdates(parsed.payload);
+    let toggle = "?";
+    if (req) {
+      toggle = req.toggle ? "on" : "off";
+    }
+    event_message(
+      "activities:host: request_script_updates absorbed session=0x%I64x variant=%s toggle=%s payload=%dB",
+      parsed.sessionId,
+      parsed.variant,
+      toggle,
+      parsed.payload.length
+    );
+  }
+
+  private absorbScriptMessage(parsed: ParsedActivityHostNotification): void {
+    const preview =
+      parsed.payload.length <= 64 ? ` ${hexPreview(parsed.payload)}` : "";
+    event_message(
+      "activities:host: %s absorbed session=0x%I64x variant=%s payload=%dB%s",
+      notificationKindName(parsed.kind),
+      parsed.sessionId,
+      parsed.variant,
+      parsed.payload.length,
+      preview
+    );
+  }
+
+  private handleJoinRequest(parsed: ParsedActivityHostNotification): void {
     try {
       const peek = peekJoinRequest(parsed.payload);
       if (peek) {
@@ -286,7 +590,9 @@ export class ActivityHostProxySession {
           player: peek.player,
           account: peek.account,
           character: peek.character,
+          identityUnknown4: peek.identityUnknown4,
         };
+        this.membership.join();
       }
       const body = buildJoinResultNotification(
         parsed.sessionId,
@@ -299,318 +605,365 @@ export class ActivityHostProxySession {
         body,
         activityHostId: parsed.sessionId,
       });
-      this.logger.log(
-        `AH proxy join result (seq ${seq.toString(16)}, ` +
-          `session=0x${parsed.sessionId.toString(16)}` +
-          ` ${this.kind} ` +
-          (peek
-            ? `nonce=${peek.nonce} ah=0x${peek.activityHostId.toString(16)} ` +
+      event_message(
+        "activities:host: join result (seq %x, session=0x%I64x %s %sreq %dB rsp %dB)",
+        seq,
+        parsed.sessionId,
+        this.kind,
+        peek
+          ? `nonce=${peek.nonce} ah=0x${peek.activityHostId.toString(16)} ` +
               `account=${peek.account} character=${peek.character} `
-            : "") +
-          `req ${parsed.payload.length}B rsp ${body.length}B)`
+          : "",
+        parsed.payload.length,
+        body.length
       );
       this.pushJoinState(parsed.sessionId);
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`AH proxy join result FAILED, absorbed: ${m}`);
+      event_warning("activities:host: join result FAILED, absorbed: %s", m);
     }
   }
 
-  /**
-   * Retail: first refresh is GAS + WGS + SensorAuth for the live slice.
-   * Join already sent the identity grant. Later refreshes carry the
-   * destination bubble; we re-bind PAH to that slice.
-   */
+  // A state refresh: the host answers with the globals and a promote, and
+  // applies the bubble the client reports. The dest apply is not gated on a
+  // refresh counter (the 2.3.1 capture sends it after client-auth); the Tower
+  // still places on refresh (single-host spawn). A PUBLIC Venus start's world
+  // lives on the GAH after the PAH revoke, so its FAH only refreshes globals.
   private handleStateRefresh(sessionId: bigint, payload: Buffer): void {
-    const opts = this.towerAuthOpts();
-    const bubbleCount = opts.scenario?.bubbleCount ?? 5;
-    if (this.currentSlice === undefined) {
-      this.currentSlice = opts.scenario?.initialBubble ?? 0;
-    }
-    const hinted = parseStateRefreshSlice(payload, bubbleCount);
-    const previousSlice =
-      hinted !== undefined && hinted !== this.currentSlice
-        ? this.currentSlice
-        : undefined;
-    if (hinted !== undefined) {
-      this.currentSlice = hinted;
-    }
-    this.logger.log(
-      `AH proxy state-refresh slice=${this.currentSlice}` +
-        (previousSlice === undefined ? "" : ` from=${previousSlice}`) +
-        ` hint=${hinted ?? "none"} payload=${hexPreview(payload)}`
+    const opts = this.sensorAuth.opts();
+    this.crossing.startAt(
+      opts.scenario?.initialBubble ?? 0,
+      opts.scenario?.initialState ?? 0
     );
+    const { refresh, previousBubble, enteringWorld } =
+      this.noteRefresh(payload);
+    if (this.retiredByRefresh(refresh, previousBubble)) {
+      return;
+    }
+    this.promotePendingHost(refresh, previousBubble, enteringWorld);
     if (this.activityStateSent) {
-      this.pushEntityIndexGrant(sessionId);
-      this.pushMembership(sessionId, previousSlice !== undefined);
+      pushEntityIndexGrant(this, sessionId);
+      this.membership.push(
+        sessionId,
+        previousBubble !== this.crossing.clientBubble
+      );
     } else {
       this.pushJoinState(sessionId);
     }
-    this.pushActivityGlobals(sessionId);
-    if (this.kind === "FAH") {
-      this.pushSensorAuthApply(sessionId);
+    this.abdicateLeftBubble(refresh, previousBubble);
+    pushActivityGlobals(this, sessionId);
+    // A pending public host is the crossing's PUBLIC TARGET: it does a full
+    // join on its own socket and then waits, and the switch task's gate is its
+    // membership + GAS + WGS, nothing else. Promoting or applying a bubble on
+    // it before the client's swap lands would seed a world it has not been
+    // told to enter.
+    if (this.isPendingTarget) {
+      return;
+    }
+    this.sensorAuth.pushPromote(sessionId);
+    this.landRefreshedBubble(sessionId, previousBubble);
+  }
+
+  // Reads the refresh and moves the client's bubble to the one it names;
+  // previousBubble is the one it was in before.
+  private noteRefresh(payload: Buffer): {
+    enteringWorld: boolean;
+    previousBubble: number | undefined;
+    refresh: StateRefresh | undefined;
+  } {
+    const refresh = parseStateRefresh(payload);
+    const previousRefreshMembership = this.lastRefreshMembership;
+    this.lastRefreshMembership = refresh?.membership;
+    // A refresh before the client's world exists (membership 0) names wherever
+    // it was last, where the 2.3.1 capture's names none: the world is the
+    // scenario's start bubble until the client enters it.
+    const activityName = this.activityName();
+    const preWorld =
+      refresh?.membership === 0 &&
+      activityName !== undefined &&
+      activityBundles(activityName) !== undefined;
+    if (preWorld && refresh) {
+      refresh.bubble = undefined;
+    }
+    // The pre-world refresh and the one after the initial slice-set swap can
+    // name the same bubble. The second is the world entry, so it must not
+    // count as "same bubble".
+    const enteringWorld =
+      previousRefreshMembership === 0 && (refresh?.membership ?? 0) > 0;
+    const previousBubble = enteringWorld
+      ? undefined
+      : this.crossing.clientBubble;
+    this.crossing.clientBubble = refresh?.bubble;
+    if (
+      refresh?.bubble !== undefined &&
+      previousBubble !== undefined &&
+      refresh.bubble !== previousBubble
+    ) {
+      this.keepalive.settleAfterSwap();
+    }
+    event_message(
+      "activities:host: state-refresh membership=%s bubble=%s from=%s payload=%s",
+      refresh?.membership ?? "?",
+      refresh?.bubble ?? "none",
+      previousBubble ?? "none",
+      hexPreview(payload)
+    );
+    return { enteringWorld, previousBubble, refresh };
+  }
+
+  // A public load-zone swap reaches every socket at once, the old public
+  // host's included, in no fixed order. The current GAH hearing a new bubble
+  // while a pending GAH exists is the host being swapped out: the client keeps
+  // its record open as PUBLIC TARGET until the transition stops, and an apply
+  // sent to it lands in a world being torn down (guest cookie assert). It is
+  // retired and sent nothing, and is already retired when the pending host's
+  // own refresh got here first and promoted it.
+  private retiredByRefresh(
+    refresh: StateRefresh | undefined,
+    previousBubble: number | undefined
+  ): boolean {
+    if (this.retired) {
+      event_message(
+        "activities:host: retired public host ah=0x%I64x ignoring state-refresh bubble=%s",
+        this.activityHost.id,
+        refresh?.bubble ?? "none"
+      );
+      return true;
+    }
+    if (this.isSwappedOutBy(refresh?.bubble, previousBubble)) {
+      this.hosts.promotePendingGah();
+      event_message(
+        "activities:host: public host ah=0x%I64x swapped out at bubble %s -> %s; retired, sending it nothing more",
+        this.activityHost.id,
+        previousBubble,
+        refresh?.bubble
+      );
+      return true;
+    }
+    return false;
+  }
+
+  private isSwappedOutBy(
+    bubble: number | undefined,
+    previousBubble: number | undefined
+  ): boolean {
+    return (
+      this.bound?.kind === "GAH" &&
+      this.bound.host === this.hosts.gah &&
+      this.hosts.pendingGah !== undefined &&
+      bubble !== undefined &&
+      previousBubble !== undefined &&
+      bubble !== previousBubble
+    );
+  }
+
+  // The pending host's own swap refresh promotes it too, but only the swap:
+  // its first refresh after joining (membership 0, no bubble) is not one, and
+  // promoting then would retire the live public host. Its world exists only
+  // once the swap lands, so the refresh that first gives it a membership is the
+  // swap, though it never had a bubble to change from. Left pending it skips
+  // its bubble's apply, and the client never builds the bundle's squads.
+  private promotePendingHost(
+    refresh: StateRefresh | undefined,
+    previousBubble: number | undefined,
+    enteringWorld: boolean
+  ): void {
+    if (
+      this.isPendingTarget &&
+      refresh?.bubble !== undefined &&
+      (enteringWorld ||
+        (previousBubble !== undefined && refresh.bubble !== previousBubble))
+    ) {
+      this.hosts.promotePendingGah();
     }
   }
 
-  /**
-   * Join-result: identity grant, entity-index, membership. GAS/WGS wait
-   * for state-refresh, matching retail.
-   */
+  // The client abdicates every entity it holds in the bubble it is leaving
+  // before it sends this refresh. Promoting that bubble again hands authority
+  // back over slots the swap has just torn down, and the guest asserts; the
+  // promote set only grows for slots the client still holds (a held slot
+  // missing from a later table asserts), so the bubble leaves the table.
+  private abdicateLeftBubble(
+    refresh: StateRefresh | undefined,
+    previousBubble: number | undefined
+  ): void {
+    if (
+      this.entitySlots.abdicateSeen &&
+      previousBubble !== undefined &&
+      refresh?.bubble !== undefined &&
+      refresh.bubble !== previousBubble
+    ) {
+      this.crossing.abdicate(previousBubble, refresh.bubble);
+      event_message(
+        "activities:host: %s bubble %d abdicated at the swap to %d; dropped from the authority table",
+        this.kind,
+        previousBubble,
+        refresh.bubble
+      );
+    }
+    this.entitySlots.abdicateSeen = false;
+  }
+
+  // The dest apply when the client reports a new bubble. A world transition
+  // recreates the guest's sensor client, which discards everything until an
+  // update with sense rows arrives, so the pre-world apply (orbit bubble)
+  // never counts, and a repeat for the same bubble must not re-apply (squads
+  // reconcile again and combatants stack).
+  private landRefreshedBubble(
+    sessionId: bigint,
+    previousBubble: number | undefined
+  ): void {
+    const bubble = this.crossing.clientBubble;
+    // A swap to another state of the same bubble reports the same bubble but is
+    // still a new world (the capture re-sends the whole table, binder
+    // included).
+    const stateSwap =
+      this.crossing.bubbleStateSwap &&
+      bubble !== undefined &&
+      bubble === previousBubble;
+    if (bubble === undefined || (bubble === previousBubble && !stateSwap)) {
+      return;
+    }
+    this.crossing.bubbleStateSwap = false;
+    const start = this.hosts.getStartRequest();
+    const activityName = this.activityName();
+    // A bubble the activity cannot serve (the world fallback included: a Venus
+    // mission can start the player in bubble 7) is not its bubble. The handle
+    // in a refresh is the world's current bubble, still wherever the client
+    // was last before the world transition; taking it as the current slice
+    // would make every row fail its bundle-to-slice lookup and be held.
+    if (activityName && !servesBubble(activityName, bubble)) {
+      event_message(
+        "activities:host: state-refresh bubble %d is not a bubble %s serves, keeping slice %s",
+        bubble,
+        activityName,
+        this.crossing.currentSlice ?? "none"
+      );
+      return;
+    }
+    this.crossing.landSwap(
+      bubble,
+      previousBubble,
+      activityPrivate(activityName)
+    );
+    // The world transition throws away every table the guest held, so nothing
+    // counts as applied across a slice switch; the applies that follow re-add
+    // them.
+    this.sensorAuth.appliedSlices.clear();
+    // The scripts must be up before the apply. A refresh that comes with an
+    // entity slot handoff (awaitingPurge, set by the abdicate before it) holds
+    // the apply off, and completeSlotHandoff sends it once the handoff is
+    // done; only a plain single-host spawn applies here directly.
+    if (activityName && this.kind === "FAH") {
+      this.scripts.start(activityName, start?.activityId);
+    }
+    this.sensorAuth.pushRowlessApply(sessionId, bubble);
+    // The rows follow the rowless apply. Every refresh into another bubble or
+    // state is a world entry: the capture re-sends the whole world, binder
+    // included, at each crossing.
+    if (activityName && activityBundles(activityName)) {
+      if (!this.entitySlots.awaitingPurge) {
+        this.sensorAuth.pushApply(sessionId, activityName, bubble, true);
+      }
+      this.worldEntered = true;
+    }
+    this.scripts.markMissionLive();
+    // Bump the membership generation after the dest apply.
+    this.membership.push(sessionId, true);
+  }
+
+  // The join result's follow-up: identity grant, entity index mask and
+  // membership. The GAS and WGS wait for the state refresh, as in the 2.3.1
+  // capture.
   private pushJoinState(sessionId: bigint): void {
     if (this.activityStateSent) {
       return;
     }
     this.activityStateSent = true;
-    const start = this.manager.getStartRequest();
-    const activityName =
-      start === undefined ? undefined : activityNameForId(start.activityId);
+    this.boundSessionId = sessionId;
+    const start = this.hosts.getStartRequest();
+    const activityName = this.activityName();
     const scenario = activityName ? scenarioClient(activityName) : undefined;
     if (start && !scenario) {
-      this.logger.warn(
-        `AH proxy no scenario for start activity=${start.activityId}`
+      event_warning(
+        "activities:host: no scenario for start activity=%s",
+        start.activityId
       );
     }
-    this.currentSlice ??= scenario?.initialBubble ?? 0;
-    this.pushJoinSensorAuth(sessionId);
-    this.pushEntityIndexGrant(sessionId);
-    this.pushMembership(sessionId);
-    this.startKeepalive(sessionId);
-  }
-
-  private pushActivityGlobals(sessionId: bigint): void {
-    const start = this.manager.getStartRequest();
-    const activityName =
-      start === undefined ? undefined : activityNameForId(start.activityId);
-    const scenario = activityName ? scenarioClient(activityName) : undefined;
-    const gas = buildGlobalActivityStateRsat({
-      activityChecksum: scenario?.privateChecksum,
-      activityId: start?.activityId,
-      activityName: scenario?.activityName,
-      bubbleCount: scenario?.bubbleCount,
-      emptyBubbles: scenario?.emptyBubbles,
-      familyChecksum: scenario?.familyChecksum,
-      initialBubble: scenario?.initialBubble,
-      instanceId: sessionId,
-    });
-    const wgs = buildWorldGlobalsStateRsat();
-    this.pushAh(
-      sessionId,
-      ActivityHostMessageType.GlobalActivityState,
-      gas,
-      `gas ${gas.length}B` +
-        (start ? ` start activity=${start.activityId}` : " start=none") +
-        (scenario
-          ? ` name=${scenario.activityName} bubbles=${scenario.bubbleCount}` +
-            (scenario.initialBubble === undefined
-              ? ""
-              : ` slice=${scenario.initialBubble}`)
-          : "")
+    this.crossing.startAt(
+      scenario?.initialBubble ?? 0,
+      scenario?.initialState ?? 0
     );
-    this.pushAh(
-      sessionId,
-      ActivityHostMessageType.WorldGlobalsState,
-      wgs,
-      `wgs ${wgs.length}B`
+    // Venus skips activity-level matchmaking, so findSessions never arms
+    // pah-policy: arm it on the FAH join so ASSIGN -> REVOKE can spin up a GAH
+    // for PUBLIC start bubbles, and pre-create the GAH so the PUBLIC TARGET
+    // join after the revoke has a live host. An all-private activity never has
+    // one to spin up: its PAH rows stay ASSIGN for the whole session.
+    if (this.kind === "FAH" && !activityPrivate(activityName)) {
+      this.hosts.pah.noteMatchmakingSearch();
+      this.hosts.ensureGah();
+    }
+    this.sensorAuth.pushJoinGrant(sessionId);
+    pushEntityIndexGrant(this, sessionId);
+    this.membership.push(sessionId);
+    this.keepalive.start(sessionId);
+    // debug-toggles.json, read again at every join and world entry.
+    event_message(
+      "activities:host: debug toggles %s",
+      describeDebugToggles(readDebugToggles())
     );
   }
 
-  private pushEntityIndexGrant(sessionId: bigint): void {
-    const mask = this.manager.host(this.kind).takeFirstEntityIndexGrant();
-    if (!mask) {
+  // The entity slot handoff is over (EntitySlots): the apply that waited for
+  // it goes out.
+  private completeSlotHandoff(sessionId: bigint, reason: string): void {
+    const slice = this.crossing.currentSlice;
+    if (this.retired || this.closed || slice === undefined) {
       return;
     }
-    this.pushAh(
-      sessionId,
-      ActivityHostMessageType.EntitySlotsAllocated,
-      mask,
-      `entity-index mask ${mask.length}B`
+    event_message(
+      "activities:host: %s slot handoff complete (%s); applying slice %d",
+      this.kind,
+      reason,
+      slice
     );
-  }
-
-  private handleClientAuth(sessionId: bigint, payload: Buffer): void {
-    this.logger.log(
-      `AH proxy client-auth ${payload.length}B session=0x${sessionId.toString(16)}`
-    );
-  }
-
-  // TODO: Entity Indices
-  /**
-   * FreeEntityIndices (class 20). Retail Tower capture never sent this.
-   */
-  private handleFreeEntityIndices(sessionId: bigint, payload: Buffer): void {
-    this.manager.host(this.kind).noteEntityIndicesFreed(payload);
-    this.logger.log(
-      `AH proxy free_entity_indices absorbed session=0x${sessionId.toString(16)} ` +
-        `mask=${payload.length}B`
-    );
-  }
-
-  /**
-   * AllocateEntityIndices (class 19), not sure what these are for yet.
-   */
-  private handleAllocateEntityIndices(
-    sessionId: bigint,
-    payload: Buffer
-  ): void {
-    const count = payload.length >= 4 ? payload.readUInt32BE(0) >>> 0 : 0;
-    const { grant, granted, source } = this.manager
-      .host(this.kind)
-      .takeAllocateEntityIndexGrant(count);
-    this.pushAh(
-      sessionId,
-      ActivityHostMessageType.EntitySlotsAllocated,
-      grant,
-      `allocate-entity-indices count=${count} granted ${granted} via ${source} ` +
-        `mask ${grant.length}B`
-    );
-  }
-
-  /**
-   * SensorAuth activity ticks @ 30 Hz. 0 stalls combatant place.
-   * Visual TOD is GAS worldServerTime, not this.
-   */
-  private activityTicks(): number {
-    if (!this.activityClockStarted) {
-      this.activityClockStarted = Date.now();
+    const start = this.hosts.getStartRequest();
+    const activityName = this.activityName();
+    // The scripts must be up before the apply, and a crossing does not go
+    // through a state refresh to start them: only the handoff landing here
+    // does.
+    if (activityName && this.kind === "FAH") {
+      this.scripts.start(activityName, start?.activityId);
     }
-    return (
-      1 + Math.floor((Date.now() - this.activityClockStarted) / (1000 / 30))
-    );
-  }
-
-  private towerAuthOpts() {
-    const start = this.manager.getStartRequest();
-    const activityName =
-      start === undefined ? undefined : activityNameForId(start.activityId);
-    return {
-      activityTime: this.activityTicks(),
-      authorityMachine: this.joinIdentity?.machine,
-      playerKey: playerKeyFromCharacter(this.joinIdentity?.character),
-      scenario: activityName ? scenarioClient(activityName) : undefined,
-    };
-  }
-
-  /**
-   * State-refresh apply: identity + current-slice squads + leftover Some.
-   * hasAuth=0. Do not None the previous slice's type-1.
-   */
-  private pushSensorAuthApply(sessionId: bigint): void {
-    const opts = this.towerAuthOpts();
-    const slice = this.currentSlice ?? opts.scenario?.initialBubble ?? 0;
-    const rsat = buildTowerSensorAuthRsat({
-      ...opts,
-      grantTable: false,
-      slice,
-    });
-    this.pushAh(
-      sessionId,
-      ActivityHostMessageType.SensorAuthUpdate,
-      rsat,
-      `sensor-auth ${rsat.length}B ${this.kind} spawn=tower apply hasAuth=0 ` +
-        `slice=${slice}`
-    );
-  }
-
-  /**
-   * Join grant (retail 261): Lifetime + Player on 4786, hasAuth=1.
-   */
-  private pushJoinSensorAuth(sessionId: bigint): void {
-    if (this.kind !== "FAH" || this.sensorAuthGranted) {
-      return;
+    this.sensorAuth.pushRowlessApply(sessionId, slice);
+    // A swap to another state of the same bubble is applied on the client's
+    // refresh of it; any other crossing's apply is the whole world again
+    // (landRefreshedBubble).
+    if (
+      activityName &&
+      activityBundles(activityName) &&
+      !this.crossing.bubbleStateSwap
+    ) {
+      this.sensorAuth.pushApply(sessionId, activityName, slice, true);
     }
-    const opts = this.towerAuthOpts();
-    const grant = buildTowerSensorAuthRsat({
-      ...opts,
-      grantTable: true,
-    });
-    const bubbles = opts.scenario?.bubbleCount ?? 5;
-    this.pushAh(
-      sessionId,
-      ActivityHostMessageType.SensorAuthUpdate,
-      grant,
-      `sensor-auth ${grant.length}B ${this.kind} spawn=tower identity grant 0..${bubbles - 1}+64`
-    );
-    this.sensorAuthGranted = true;
-  }
-
-  /** Idle tick: activity time only, no bundle items. */
-  private pushSensorAuthTick(sessionId: bigint): void {
-    const rsat = buildSensorAuthTickRsat(this.activityTicks());
-    this.pushAh(
-      sessionId,
-      ActivityHostMessageType.SensorAuthUpdate,
-      rsat,
-      `sensor-auth ${rsat.length}B ${this.kind} tick`
-    );
-  }
-
-  private pushMembership(sessionId: bigint, force = false): void {
-    if (!this.joinIdentity || (!force && this.membershipPushes >= 1)) {
-      return;
-    }
-    this.membershipPushes += 1;
-    const generation = ++this.membershipGeneration;
-    const start = this.manager.getStartRequest();
-    const activityName =
-      start === undefined ? undefined : activityNameForId(start.activityId);
-    const scenario = activityName ? scenarioClient(activityName) : undefined;
-    const bubbleCount = scenario?.bubbleCount ?? 1;
-    const mem = buildReplicateMembershipRsat(this.joinIdentity, {
-      bubbleCount,
-      emptyBubbles: scenario?.emptyBubbles,
-      generation,
-      initialBubble: this.currentSlice ?? scenario?.initialBubble,
-    });
-    const machine = this.joinIdentity.machine.toString("hex");
-    this.pushAh(
-      sessionId,
-      ActivityHostMessageType.ReplicateMembership,
-      mem,
-      `membership ${mem.length}B gen=${generation} slot0 machine=${machine} ` +
-        `pah bubbles=${bubbleCount} slice=${this.currentSlice ?? scenario?.initialBubble} ` +
-        "tokens=1..8 local-only"
-    );
-  }
-
-  private pushAh(
-    sessionId: bigint,
-    kind: ActivityHostMessageType,
-    payload: Buffer,
-    label: string
-  ): void {
-    const body = buildActivityHostToClientNotification(
-      sessionId,
-      kind,
-      payload
-    );
-    const seq = this.notifySeq++ >>> 0;
-    this.send({
-      msgType: BapMessageType.ActivityHostToClientNotification,
-      sequence: seq,
-      body,
-      activityHostId: sessionId,
-    });
-    this.logger.log(
-      `AH proxy ${label} (seq ${seq.toString(16)}, ah=0x${sessionId.toString(16)})`
-    );
-  }
-
-  private startKeepalive(sessionId: bigint): void {
-    this.stopKeepalive();
-    const beat = (): void => {
-      if (this.closed) {
-        this.stopKeepalive();
-        return;
-      }
-      this.pushSensorAuthTick(sessionId);
-    };
-    this.keepalive = setInterval(beat, 3000);
-  }
-
-  private stopKeepalive(): void {
-    if (this.keepalive) {
-      clearInterval(this.keepalive);
-      this.keepalive = undefined;
+    // The activity and world globals are re-sent right after the dest apply;
+    // without them the client sits in transition phase 3 and never flips.
+    pushActivityGlobals(this, sessionId);
+    // The region being entered needs both hosts. A crossing announces itself on
+    // one socket only, so the peer never otherwise hears about the bubble.
+    // pendingRegion names this crossing's target for as long as the client
+    // keeps advertising it, so a landing apply recognises it was one.
+    const pending = this.crossing.pendingRegion
+      ? unpackBubbleStateHandle(this.crossing.pendingRegion.regionId)
+      : undefined;
+    if (pending?.bubble === slice) {
+      this.hosts
+        .session(this.kind === "FAH" ? "GAH" : "FAH")
+        ?.applyCrossing(
+          slice,
+          this.crossing.pendingRegion?.token,
+          pending.state
+        );
     }
   }
 
@@ -624,28 +977,135 @@ export class ActivityHostProxySession {
       sequence: message.sequence,
       body: Buffer.alloc(0),
     });
-    this.logger.log(
-      `AH proxy ${label} rsp (seq ${message.sequence.toString(16)}, req ${message.body.length}B)`
+    event_message(
+      "activities:host: %s rsp (seq %x, req %dB)",
+      label,
+      message.sequence,
+      message.body.length
     );
   }
 
   private send(message: RawBapMessage): void {
     const frame = this.codec.encode(message);
-    this.logger.log(
-      `AH proxy → ${bapMessageTypeName(message.msgType)} seq=${message.sequence} ` +
-        `frame=${frame.length}b`
+    // Notifications go out many times a second; keep their trace off the status level.
+    const trace =
+      message.msgType === BapMessageType.ActivityHostToClientNotification
+        ? event_verbose
+        : event_status;
+    trace(
+      "activities:host: → %s seq=%u frame=%db",
+      bapMessageTypeName(message.msgType),
+      message.sequence,
+      frame.length
     );
     this.socket.write(frame);
   }
-}
 
-function aes128CbcEncrypt(key: Buffer, iv: Buffer, data: Buffer): Buffer {
-  const cipher = crypto.createCipheriv("aes-128-cbc", key, iv);
-  return Buffer.concat([cipher.update(data), cipher.final()]);
-}
+  // What the player's other host and the script host reach this connection
+  // through (HostSession).
+  applyCrossing(bubble: number, token?: number, state = 0): void {
+    this.crossing.applyCrossing(bubble, token, state);
+  }
 
-function hexPreview(buf: Buffer, max = 64): string {
-  const slice = buf.subarray(0, max);
-  const hex = slice.toString("hex");
-  return buf.length > max ? `${hex}…(${buf.length}B)` : hex;
+  notePlayerTrigger(bundle: number, typeIndex: number): void {
+    this.scripts.notePlayerTrigger(bundle, typeIndex);
+  }
+
+  noteClientIncident(nameHash: number): void {
+    this.scripts.noteClientIncident(nameHash);
+  }
+
+  noteKill(details: KillFilterDetails): void {
+    this.scripts.noteKill(details);
+  }
+
+  noteSquadKill(idents: readonly number[], at?: IncidentPosition): void {
+    this.scripts.noteSquadKill(idents, at);
+  }
+
+  noteInteraction(carries: (name: number) => boolean): void {
+    this.scripts.noteInteraction(carries);
+  }
+
+  noteLootGathered(carries: (material: number) => boolean): void {
+    this.scripts.noteLootGathered(carries);
+  }
+
+  pushRows(entries: readonly SensorAuthSenseEntry[]): void {
+    this.sensorAuth.pushRows(entries);
+  }
+
+  republishTables(label: string): void {
+    this.sensorAuth.republishTables(label);
+  }
+
+  worldRows(activityName: string): Set<string> | undefined {
+    return this.sensorAuth.worldRows(activityName);
+  }
+
+  // The script debugger's hooks (src/debug/) and the script rebuild's.
+
+  // The player this connection belongs to, for the debugger's player list.
+  debugHosts(): PlayerHosts | undefined {
+    return this.bound?.hosts;
+  }
+
+  // A script rebuild (script-build.ts): this connection's activity has a
+  // host running stale scripts, so the socket closes and the client
+  // relaunches into the new build. The close path ends the instance with its
+  // host once the last socket is gone. Says what was dropped, or nothing when
+  // there was no scripted host to drop.
+  closeForScriptReload(): string | undefined {
+    const activityName = this.activityName();
+    if (!activityName || this.closed) {
+      return;
+    }
+    const instance = findActivityInstance(activityName, this.hosts);
+    if (!instance?.host()) {
+      return;
+    }
+    this.socket.destroy();
+    return `${this.kind} ${this.remote} in ${activityName}`;
+  }
+
+  // The debugger's kick: the connection drops as a host crash would, and the
+  // client goes back to orbit. The instance ends with its last socket.
+  debugKick(): string {
+    const activityName = this.activityName() ?? "no activity";
+    this.socket.destroy();
+    return `${this.kind} ${this.remote} (${activityName})`;
+  }
+
+  debugBubble(): string | undefined {
+    const bubble = this.crossing.clientBubble ?? this.crossing.currentSlice;
+    return bubble === undefined
+      ? undefined
+      : `${bubble}.${this.crossing.currentBubbleState}`;
+  }
+
+  logRowsFlushed(count: number): void {
+    event_message("activities:host: debugger pushed %d changed row(s)", count);
+  }
+
+  activityInstance(): ActivityInstance | undefined {
+    const activityName = this.activityName();
+    return activityName
+      ? activityInstanceFor(activityName, this.hosts)
+      : undefined;
+  }
+
+  // A teleport the debugger asks for (RegionCrossing.debugTeleport).
+  debugTeleport(region: number, transition: number): string {
+    return this.crossing.debugTeleport(region, transition);
+  }
+
+  debugTeleportClear(): string {
+    return this.crossing.debugTeleportClear();
+  }
+
+  // The debugger changed rows (an expression, a row action): they go out now,
+  // spawned or not, since the tick that would send them waits for a spawn.
+  debugFlushRows(): number {
+    return this.scripts.debugFlushRows();
+  }
 }

@@ -1,0 +1,75 @@
+syntax = "proto2";
+
+package destiny.v38464.content;
+
+// Content manifest: HTTPS GET (up to 65536 bytes) of Engine Configuration 1.2
+// in bootflow:content_check (sub_8AFCA0). The body is this message alone,
+// decoded from byte 0 by sub_17F9BF0 (nanopb 0x2BC5170). There is no
+// signature header, no signature flag and no guid.
+
+// List 1 entry.
+message ManifestUnknown1 {
+  required uint32 id = 1;
+  // 128 chars
+  required string unknown2 = 2;
+  required uint32 unknown3 = 3;
+}
+
+message ManifestUnknown2Name {
+  // 48 chars
+  required string unknown1 = 1;
+}
+
+message ManifestUnknown2Keys {
+  // up to 16 bytes each
+  required bytes unknown1 = 1;
+  required bytes unknown2 = 2;
+  required bytes unknown3 = 3;
+}
+
+message ManifestUnknown2Label {
+  // 48 chars
+  optional string unknown1 = 1;
+}
+
+message ManifestUnknown2Detail {
+  optional ManifestUnknown2Name unknown1 = 1;
+  optional ManifestUnknown2Keys unknown2 = 2;
+  optional ManifestUnknown2Label unknown3 = 3;
+}
+
+// List 2 entry.
+message ManifestUnknown2 {
+  required uint32 id = 1;
+  required uint32 unknown2 = 2;
+  required ManifestUnknown2Detail unknown3 = 3;
+  required uint32 unknown4 = 4;
+  required bool unknown5 = 5;
+}
+
+// List 3 entry. Only the offer id and the name here; the Alpha Trial added
+// package_id and header_value.
+message ManifestPackage {
+  required uint32 offer_id = 1;
+  // Package file basename, 256 chars. The client counts the entries with a
+  // name.
+  required string name = 2;
+}
+
+// List 4 entry.
+message ManifestUnknown4 {
+  // 256 chars
+  optional string unknown1 = 1;
+  optional uint32 unknown2 = 2;
+}
+
+message ContentManifest {
+  // up to 64
+  repeated ManifestUnknown1 unknown1 = 1;
+  // up to 64
+  repeated ManifestUnknown2 unknown2 = 2;
+  // up to 800
+  repeated ManifestPackage packages = 3;
+  // up to 256
+  repeated ManifestUnknown4 unknown4 = 4;
+}

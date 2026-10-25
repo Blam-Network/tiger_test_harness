@@ -1,27 +1,13 @@
-export const DEMONWARE_LOBBY_PORTS_DEFAULT = [1020, 1011] as const;
+import {
+  resolveDemonwareBindHost,
+  resolveDemonwareLobbyPortList,
+} from "../env";
+import { demonwareBuild } from "./versions";
 
-/**
- * Parse listen ports from env.
- * - `DEMONWARE_LOBBY_PORT=1020` → single port
- * - `DEMONWARE_LOBBY_PORTS=1020,1011` → list
- * - unset → {@link DEMONWARE_LOBBY_PORTS_DEFAULT}
- */
+// Listen ports from DEMONWARE_LOBBY_PORT (one) or DEMONWARE_LOBBY_PORTS
+// (a list, 1020,1011); unset gives the build's lobbyPorts.
 export function resolveDemonwareLobbyPorts(): number[] {
-  const single = process.env.DEMONWARE_LOBBY_PORT;
-  if (single?.trim()) {
-    return [Number(single)];
-  }
-
-  const list = process.env.DEMONWARE_LOBBY_PORTS;
-  if (list?.trim()) {
-    return list
-      .split(",")
-      .map((p) => Number(p.trim()))
-      .filter((n) => Number.isFinite(n) && n > 0);
-  }
-
-  return [...DEMONWARE_LOBBY_PORTS_DEFAULT];
+  return resolveDemonwareLobbyPortList(demonwareBuild().lobbyPorts);
 }
 
-export const DEMONWARE_BIND_HOST =
-  process.env.DEMONWARE_BIND_HOST ?? process.env.HOSTNAME ?? "0.0.0.0";
+export const DEMONWARE_BIND_HOST = resolveDemonwareBindHost();

@@ -1,6 +1,6 @@
 import { c } from "@craftycodie/cstruct";
 
-/** Wire body: `[u8 family_type][u64be root_soid]` (9B). */
+// Wire body: [u8 family_type][u64be root_soid] (9 bytes).
 const SubscribeRequest = c.struct({
   familyType: c.u8(),
   rootSoid: c.u64(),

@@ -1,0 +1,8 @@
+syntax = "proto2";
+
+package destiny.v36735.bap;
+
+message ClientConfigResponse {
+  required uint64 cookie = 1;
+  required uint32 social_matchmaking_id = 2;
+}

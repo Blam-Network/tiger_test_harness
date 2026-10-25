@@ -19,6 +19,17 @@ describe("ActivityHostService", () => {
     expect(ah.takeFirstEntityIndexGrant()).toBeNull();
   });
 
+  it("re-grants class 0 after resetClientGrants (reconnect / new join)", () => {
+    const ah = new ActivityHostService(1n);
+    expect(ah.takeFirstEntityIndexGrant()).not.toBeNull();
+    expect(ah.takeFirstEntityIndexGrant()).toBeNull();
+    ah.resetClientGrants();
+    const again = ah.takeFirstEntityIndexGrant();
+    expect(again?.equals(Buffer.alloc(ENTITY_INDEX_MASK_BYTES, 0xff))).toBe(
+      true
+    );
+  });
+
   it("does not share grant state with another AH", () => {
     const fah = new ActivityHostService(1n);
     const gah = new ActivityHostService(2n);

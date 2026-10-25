@@ -2,16 +2,13 @@ import * as crypto from "node:crypto";
 
 export type ActivityHostKind = "FAH" | "GAH";
 
-/**
- * One activity host (FAH or GAH).
- */
 export const ENTITY_INDEX_MASK_BYTES = 1536;
 const ENTITY_INDEX_SLOT_COUNT = ENTITY_INDEX_MASK_BYTES * 8;
 const ALLOCATE_ENTITY_INDEX_MAX = 2048;
 const ALLOCATE_ENTITY_INDEX_DEFAULT = 64;
 
-/** Non-zero u64. Client rejects id 0 as `invalid activity host id`. */
-export function randomActivityHostId(): bigint {
+// Non-zero u64. Client rejects id 0 as `invalid activity host id`.
+function randomActivityHostId(): bigint {
   let id = 0n;
   while (id === 0n) {
     id = crypto.randomBytes(8).readBigUInt64BE(0);
@@ -39,6 +36,14 @@ export class ActivityHostService {
     return Buffer.alloc(ENTITY_INDEX_MASK_BYTES, 0xff);
   }
 
+  // The mask is one-shot per client, not per host lifetime. A reconnect must
+  // get class 0 again or setup stalls on ENUM(26), "waiting for entity
+  // indices".
+  resetClientGrants(): void {
+    this.entityIndexGranted = false;
+    this.entityIndexFreeMask = undefined;
+  }
+
   noteEntityIndicesFreed(mask: Buffer): void {
     if (mask.length < ENTITY_INDEX_MASK_BYTES) {
       return;
@@ -48,12 +53,10 @@ export class ActivityHostService {
     );
   }
 
-  /**
-   * AllocateEntityIndices (class 19) answer. Guest 8360FE10 rejects count
-   * outside 0..2048; 0 would send an empty mask and trap in 83604A80.
-   * Grant bits the client previously freed (high indices first, matching
-   * 8284A830). Fall back to high unused slots if the free pool is empty.
-   */
+  // AllocateEntityIndices (class 19) answer. The guest rejects a count outside
+  // 0..2048, and 0 would send an empty mask and trap. Grant bits the client
+  // previously freed (high indices first, as the client allocates them), and
+  // fall back to high unused slots if the free pool is empty.
   takeAllocateEntityIndexGrant(count: number): {
     grant: Buffer;
     granted: number;
@@ -92,10 +95,8 @@ export class ActivityHostService {
   }
 }
 
-/**
- * Xbox BE u32 bitset: word MSB = high index in the word (see 8284A830 cntlzw).
- * Bit `i` → word `i>>5`, value bit `i&31` (LSB = low index).
- */
+// Xbox BE u32 bitset: word MSB = high index in the word.
+// Bit `i` → word `i>>5`, value bit `i&31` (LSB = low index).
 function entityIndexBitGet(mask: Buffer, bit: number): boolean {
   if (bit < 0 || bit >= ENTITY_INDEX_SLOT_COUNT) {
     return false;

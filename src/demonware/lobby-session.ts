@@ -1,5 +1,9 @@
 import type * as net from "node:net";
-import type ILogger from "../ILogger";
+import {
+  event_message,
+  event_status,
+  event_warning,
+} from "@blamnetwork/datamine";
 import {
   CLIENT_HEADER_MAGIC,
   DEFAULT_SERVER_MAX_MSG,
@@ -7,41 +11,67 @@ import {
   MSG_CLIENT_INIT_BLOB,
   MSG_LSG_CONNECTION_ID,
 } from "./constants";
+import { LOBBY_PROTOCOL_210, Lobby210Connection } from "./lobby-210";
 import { dispatchLobbyService } from "./matchmaking";
 import { buildConnectionIdFrame } from "./typed-buffer";
-import { hexPreview, readI32LE, writeI32LE } from "./util";
+import { hexPreview, type LobbyLink, readI32LE, writeI32LE } from "./util";
+import { demonwareBuild } from "./versions";
 
-/**
- * Destiny (Xbox 360 DW3) LSG / bdLobbyConnection session.
- *
- * Destiny does not use later CoD s1x AB81/AB82/AB85 crypto. Flow:
- *   1. Client sends 8-byte "200 header": u32le magic=200 | u32le maxRecvBuffer
- *   2. Framed messages: u32le size | u8 encryptFlag | body[size-1]
- *   3. body[0] is lobby control type or bd* service id
- */
+const KEEPALIVE_INTERVAL_MS = 60_000;
+
+// LSG / bdLobbyConnection session. A protocol 210 build runs its handshake
+// and records in lobby-210.ts and hands the messages to handleBody. The 200
+// flow:
+//   1. Client sends 8-byte "200 header": u32le magic=200 | u32le maxRecvBuffer
+//   2. Framed messages: u32le size | u8 encryptFlag | body[size-1]
+//   3. body[0] is lobby control type or bd* service id
 export class LobbySession {
-  private buffer = Buffer.alloc(0);
+  private buffer: Buffer = Buffer.alloc(0);
   private gotClientHeader = false;
   private clientMaxMsg = DEFAULT_SERVER_MAX_MSG;
   private sentConnectionId = false;
   private readonly remote: string;
 
-  constructor(
-    private readonly socket: net.Socket,
-    private readonly logger: ILogger
-  ) {
+  constructor(private readonly socket: net.Socket) {
     this.remote = `${socket.remoteAddress}:${socket.remotePort}`;
-    this.logger.log(`Lobby connect from ${this.remote}`);
+    event_message("demonware:lobby: connect from %s", this.remote);
+
+    socket.on("error", (err) => {
+      event_warning(
+        "demonware:lobby: socket error (%s): %s",
+        this.remote,
+        err.message
+      );
+    });
+    // The client drops the lobby after 200 s with nothing received
+    // (bdLobbyConnection); an empty frame is the keepalive, in 210 as well
+    // (the client sends them).
+    const keepalive = setInterval(
+      () => socket.write(Buffer.alloc(4)),
+      KEEPALIVE_INTERVAL_MS
+    );
+    socket.on("close", () => {
+      clearInterval(keepalive);
+      event_message("demonware:lobby: disconnect %s", this.remote);
+    });
+
+    // A 210 connection carries no other plaintext frame: its connection id is
+    // in the handshake.
+    if (demonwareBuild().lobbyProtocol === LOBBY_PROTOCOL_210) {
+      this.sentConnectionId = true;
+      const connection = new Lobby210Connection(
+        socket,
+        this.remote,
+        FAKE_CONNECTION_ID,
+        (body) => this.handleBody(body, connection.link)
+      );
+      socket.on("data", (chunk) => connection.receive(chunk));
+      return;
+    }
 
     socket.on("data", (chunk) => {
       this.buffer = Buffer.concat([this.buffer, chunk]);
       this.buffer = this.drain();
-    });
-    socket.on("error", (err) => {
-      this.logger.warn(`Lobby socket error (${this.remote}): ${err.message}`);
-    });
-    socket.on("close", () => {
-      this.logger.log(`Lobby disconnect ${this.remote}`);
     });
   }
 
@@ -60,13 +90,18 @@ export class LobbySession {
       if (magic === CLIENT_HEADER_MAGIC) {
         this.gotClientHeader = true;
         this.clientMaxMsg = maxMsg || DEFAULT_SERVER_MAX_MSG;
-        this.logger.log(
-          `[${this.remote}] 200 client header ok (maxMsg=${this.clientMaxMsg})`
+        event_message(
+          "demonware:lobby: [%s] 200 client header ok (maxMsg=%d)",
+          this.remote,
+          this.clientMaxMsg
         );
         this.sendConnectionId();
       } else {
-        this.logger.warn(
-          `[${this.remote}] expected 200 client header, got magic=${magic} (0x${magic.toString(16)})`
+        event_warning(
+          "demonware:lobby: [%s] expected 200 client header, got magic=%u (0x%x)",
+          this.remote,
+          magic,
+          magic
         );
         buffer = Buffer.concat([writeI32LE(magic), writeI32LE(maxMsg), buffer]);
         this.gotClientHeader = true;
@@ -83,8 +118,9 @@ export class LobbySession {
       }
 
       if (size === CLIENT_HEADER_MAGIC && !this.sentConnectionId) {
-        this.logger.warn(
-          `[${this.remote}] saw size==200 mid-stream — treating as late client header`
+        event_warning(
+          "demonware:lobby: [%s] saw size==200 mid-stream — treating as late client header",
+          this.remote
         );
         if (buffer.length < 8) {
           return buffer;
@@ -96,8 +132,10 @@ export class LobbySession {
       }
 
       if (size > 0x100000) {
-        this.logger.warn(
-          `[${this.remote}] absurd frame size ${size} — dropping connection`
+        event_warning(
+          "demonware:lobby: [%s] absurd frame size %d — dropping connection",
+          this.remote,
+          size
         );
         this.socket.destroy();
         return Buffer.alloc(0);
@@ -123,33 +161,55 @@ export class LobbySession {
     this.sentConnectionId = true;
     const frame = buildConnectionIdFrame(FAKE_CONNECTION_ID);
     this.socket.write(frame);
-    this.logger.log(
-      `[${this.remote}] LSG connection ID (type 4) sent id=0x${FAKE_CONNECTION_ID.toString(16)} frame=${hexPreview(frame)}`
+    event_message(
+      "demonware:lobby: [%s] LSG connection ID (type 4) sent id=0x%I64x frame=%s",
+      this.remote,
+      FAKE_CONNECTION_ID,
+      hexPreview(frame)
     );
   }
 
   private handleFrame(size: number, payload: Buffer): void {
     if (payload.length < 1) {
-      this.logger.warn(`[${this.remote}] empty frame size=${size}`);
+      event_warning(
+        "demonware:lobby: [%s] empty frame size=%d",
+        this.remote,
+        size
+      );
       return;
     }
 
     const enc = payload[0]!;
     const body = payload.subarray(1);
 
-    this.logger.log(
-      `[${this.remote}] frame size=${size} enc=${enc} body=${hexPreview(body, 96)}`
+    event_status(
+      "demonware:lobby: [%s] frame size=%d enc=%d body=%s",
+      this.remote,
+      size,
+      enc,
+      hexPreview(body, 96)
     );
 
     if (enc === 1 || enc === 2) {
-      this.logger.warn(
-        `[${this.remote}] encrypted frame (flag=${enc}) not implemented`
+      event_warning(
+        "demonware:lobby: [%s] encrypted frame (flag=%d) not implemented",
+        this.remote,
+        enc
       );
       return;
     }
 
+    this.handleBody(body, this.socket);
+  }
+
+  // A message: its type, then its data (a 200 frame's body, or a 210
+  // record's message).
+  private handleBody(body: Buffer, link: LobbyLink): void {
     if (body.length < 1) {
-      this.logger.warn(`[${this.remote}] frame missing message type`);
+      event_warning(
+        "demonware:lobby: [%s] frame missing message type",
+        this.remote
+      );
       return;
     }
 
@@ -158,30 +218,32 @@ export class LobbySession {
 
     switch (msgType) {
       case MSG_CLIENT_INIT_BLOB:
-        this.logger.log(
-          `[${this.remote}] client init blob (type 7) len=${rest.length} data=${hexPreview(rest, 48)}`
+        event_message(
+          "demonware:lobby: [%s] client init blob (type 7) len=%d data=%s",
+          this.remote,
+          rest.length,
+          hexPreview(rest, 48)
         );
         this.sendConnectionId();
         break;
 
       case MSG_LSG_CONNECTION_ID:
-        this.logger.log(
-          `[${this.remote}] unexpected client connection-id echo? ${hexPreview(rest)}`
+        event_message(
+          "demonware:lobby: [%s] unexpected client connection-id echo? %s",
+          this.remote,
+          hexPreview(rest)
         );
         break;
 
       default:
         if (msgType >= 8) {
-          dispatchLobbyService(
-            this.socket,
+          dispatchLobbyService(link, this.remote, msgType, rest);
+        } else {
+          event_warning(
+            "demonware:lobby: [%s] unhandled LSG message type=%d rest=%s",
             this.remote,
             msgType,
-            rest,
-            this.logger
-          );
-        } else {
-          this.logger.warn(
-            `[${this.remote}] unhandled LSG message type=${msgType} rest=${hexPreview(rest)}`
+            hexPreview(rest)
           );
         }
         break;

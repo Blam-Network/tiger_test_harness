@@ -1,3 +1,9 @@
+// Where a lobby service writes its frames: the socket itself, or a 210
+// connection that seals each frame into a record.
+export interface LobbyLink {
+  write(frame: Buffer): unknown;
+}
+
 export function writeI32LE(value: number): Buffer {
   const b = Buffer.alloc(4);
   b.writeInt32LE(value, 0);

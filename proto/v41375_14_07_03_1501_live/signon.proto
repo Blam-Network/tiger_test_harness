@@ -1,0 +1,81 @@
+syntax = "proto2";
+
+package destiny.v41375.signon;
+
+// XHTTP POST /SignOn. The client logs "Processing signon success ticket from
+// server" when it parses the response.
+
+// Client to server body; XHTTP still stamps the Content-Type as
+// x-www-form-urlencoded.
+message SignonRequest {
+  optional uint32 id = 1;
+  // Xbox Live / identity token (cs_signon_token path)
+  optional bytes ticket = 2;
+  optional string language = 3;
+  optional bytes reserved4 = 4;
+  optional string version = 5;
+  optional string build = 6;
+  // True when the client accepts the EULA / newsletter prompt
+  optional bool accepted_prompt = 7;
+  optional bool reserved8 = 8;
+  optional string email = 11;
+  // Fixed buffer size 0xa8
+  optional bytes reserved12 = 12;
+  optional uint64 reserved13 = 13;
+  // Fixed buffer size 0x118
+  optional bytes reserved14 = 14;
+}
+
+message SuccessTicket {
+  // field 1: id region (16 bytes unused by parser)
+  required bytes id = 1;
+  // field 2: session key AES (len == 16) — BAP secure hello
+  required bytes session_key_aes = 2;
+  // field 3: session key HMAC (len == 16) — BAP secure hello
+  required bytes session_key_hmac = 3;
+  // field 4: security token (non-empty)
+  required bytes security_token = 4;
+  // field 5: uint64 @ ticket+576, possibly a time
+  required uint64 reserved5 = 5;
+  // field 6: BAP IPv4 (ticket endian; Xbox bswaps before use)
+  required uint32 bap_ipv4 = 6;
+  // field 7: BAP TCP port
+  required uint32 bap_port = 7;
+}
+
+// Engine Configuration field 1 (nanopb 0x8200BBC0). Every field defaults to
+// empty and the decoder resets to defaults first, so a partial config is fine.
+message ContentConfiguration {
+  // config +0, up to 4096 bytes
+  optional bytes unknown1 = 1;
+  // Fetched in bootflow:content_check (config +4100, up to 255 chars)
+  optional string content_manifest_url = 2;
+  // Must equal the manifest's guid (config +4356, 36 chars)
+  optional string content_guid = 3;
+  // config +4393, up to 127 chars
+  optional string unknown4 = 4;
+}
+
+// Engine Configuration (nanopb 0x82017B78, global dword_835038DC).
+// About 58 top-level submessages; only the content one is used.
+message EngineConfiguration {
+  optional ContentConfiguration content = 1;
+}
+
+// Signon response field 4 (nanopb 0x82019A30).
+message SignonConfiguration {
+  // signon+17504, required by the decoder
+  required uint64 unknown1 = 1;
+  // signon+17512, required by the decoder
+  required uint32 unknown2 = 2;
+  // Serialized EngineConfiguration, decoded by sub_828351F0
+  optional bytes engine_configuration = 3;
+}
+
+message SignonResponse {
+  // 0 = success, 1 = queue, 3 = error
+  required uint32 type = 1;
+  required SuccessTicket success_ticket = 2;
+  // 41375 only
+  optional SignonConfiguration configuration = 4;
+}
