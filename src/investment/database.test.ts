@@ -138,6 +138,6 @@ describe("build database", () => {
       } finally {
         await store.disconnect();
       }
-    }, 120_000);
+    });
   }
 });

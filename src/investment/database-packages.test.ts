@@ -58,5 +58,5 @@ describeEachPackages("starter kit in the build database", (build) => {
     } finally {
       await store.disconnect();
     }
-  }, 120_000);
+  });
 });

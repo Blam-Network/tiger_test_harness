@@ -22,10 +22,8 @@ One process serves one build, chosen by `TIGER_GAME_BUILD` (build string or fold
 | `36735.13.12.02.1953.alpha` | `v36735_13_12_02_1953_alpha` |
 
 ## Setup
-1. Get tiger into `vendor/tiger`. web-tiger depends on its `gibbon`, `bullshcript`, `poodle`, `rsat` and `datamine` packages through `file:vendor/tiger/...`, and `vendor/tiger` is a git submodule pinned to a tiger commit.
-    - CI and a fresh clone: `git clone --recurse-submodules`.
-    - Local development against your own tiger checkout: `npm run tiger:link` instead. It links `vendor/tiger` to `../tiger` (or `TIGER_DIR`) with a junction on Windows and a symlink elsewhere, and refuses a `vendor/tiger` folder with files in it. Don't run `git submodule update` with the link in place: it would check the pinned commit out in your checkout (`tiger:link` sets `submodule.vendor/tiger.update` to `none` in this repo's git config to stop that). To bump the pin, commit in tiger and run `git add vendor/tiger` here.
-2. Build tiger (`npm install && npm run build` in `vendor/tiger`, or just the packages above with `npm run build -w packages/<name>`), then `npm install` here.
+1. Get tiger: `vendor/tiger` is a git submodule pinned to a tiger commit, and web-tiger depends on its `gibbon`, `bullshcript`, `poodle`, `rsat` and `datamine` packages through `file:vendor/tiger/...`. Clone with `--recurse-submodules`, or run `git submodule update --init` in an existing clone. Edit tiger inside `vendor/tiger`; to move the pin, commit and push there, then `git add vendor/tiger` here.
+2. `npm run tiger:build` (installs tiger and builds those packages), then `npm install`.
 3. Create a `.env` file in the project root:
     ```env
     # Required: the game's packages directory for the served build
@@ -85,9 +83,9 @@ npm run build && npm run start:prod    # node dist/main
 `node dist/cli` asks for the packages folder and build the way the release executable does (see below); `node dist/main` takes everything from the environment.
 
 ## Tests
-`npm run validate` runs lint (`ultracite`), tests and typecheck.
+`npm run validate` runs lint (`ultracite`), tests and typecheck without any local test packages, as CI does; it is also the pre-commit hook.
 
-Tests that read game data run on a build's own packages: copy `.env.test.example` to `.env.test` and point each `TIGER_TEST_PACKAGES_<BUILD FOLDER>` at that build's packages folder (its `.pkg` headers must name the build). `TIGER_PACKAGES_DIR` from `.env` never reaches the tests. A build with no folder skips its package tests, and the run prints a line saying so.
+`npm test` also runs the tests that read game data, on each build's own packages: copy `.env.test.example` to `.env.test` and point each `TIGER_TEST_PACKAGES_<BUILD FOLDER>` at that build's packages folder (its `.pkg` headers must name the build). `TIGER_PACKAGES_DIR` from `.env` never reaches the tests. A build with no folder skips its package tests, and the run prints a line saying so.
 
 A test runs on the build its `versions/<folder>/` names, else on the live build. Suites for every build are `*.builds.test.ts` files that use `describeEachBuild` (`describeBuild` runs one suite under a given build, both in `src/test-support/build.ts`); vitest runs each build's in a project and process of its own. To run only one build's: `npx vitest run --project <build folder>`.
 

@@ -205,8 +205,7 @@ describeBuild(
         expect(lines).toContain(
           "lua phase02.vex_warp_gate00._squad__gate t2#70 drop #1 queue 1"
         );
-      },
-      60_000
+      }
     );
 
     // The warpgates filter keeps every combatant of the gates' type, and a
@@ -224,8 +223,7 @@ describeBuild(
           ?.entries()
           .find(({ clientRef: r }) => r.typeId === 33 && r.typeIndex === 150);
         expect(filter?.authBits).toBeGreaterThan(4);
-      },
-      60_000
+      }
     );
 
     // The four gates share one identifier, so a kill incident finds its squad
@@ -248,8 +246,7 @@ describeBuild(
         expect(lines.join(" ")).toMatch(
           /kill credited to 517641f1:73 \(position\)/
         );
-      },
-      60_000
+      }
     );
 
     // A command script is the atoms of a ControlPoint row, which the ship's
@@ -268,8 +265,7 @@ describeBuild(
         expect(lines).toContain(flown("fallen_dropship01_next", 2, 7));
         expect(lines).toContain(flown("fallen_dropship01_exit", 5, 5));
         expect(lines).toContain("lua sq_fallen_dropship t1#1 bodies=0");
-      },
-      60_000
+      }
     );
 
     // The console is its Object row's component, shown by the objective's
@@ -289,8 +285,7 @@ describeBuild(
         expect(lines).toContain(
           "lua ch2m3_interactable._interactable:is_active() -> true (interaction)"
         );
-      },
-      60_000
+      }
     );
   }
 );

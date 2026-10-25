@@ -42,7 +42,7 @@ describeEachPackages(
       expect(levelForXp(newCharacterXp())).toBe(NEW_CHARACTER_LEVEL);
       expect(levelForXp(newCharacterXp() - 1)).toBe(NEW_CHARACTER_LEVEL - 1);
       expect(activityName(expected?.strike ?? -1)).toBe("cosmo_portal_1");
-    }, 60_000);
+    });
   },
   Object.keys(NEW_CHARACTER) as e_build[]
 );

@@ -38,7 +38,7 @@ describeEachBuild("schema registration", (BUILD) => {
     for (const id of BUILD_SCHEMA_IDS[BUILD]) {
       expect(findByHash(id)).toBeDefined();
     }
-  }, 60_000);
+  });
 
   it("registers none of the other builds' ids", async () => {
     const { findByHash, loadAccessors } = await importAll(BUILD);
@@ -48,5 +48,5 @@ describeEachBuild("schema registration", (BUILD) => {
         expect(findByHash(id)).toBeUndefined();
       }
     }
-  }, 60_000);
+  });
 });

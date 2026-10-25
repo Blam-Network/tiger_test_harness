@@ -23,7 +23,7 @@ async function freshTables() {
   return { dir, ...(await import("./tables")) };
 }
 
-describeWithPackages("table cache", { timeout: 30_000 }, () => {
+describeWithPackages("table cache", () => {
   it("writes a table under a key and reuses it", async () => {
     const { bundleTable, dir } = await freshTables();
     const table = bundleTable("cine_reveal");

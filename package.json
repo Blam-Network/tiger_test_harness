@@ -30,12 +30,12 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "nest start",
     "start:dev": "npm run prisma:generate && npm run proto:generate && concurrently -k -n proto,tiger,stamp,nest -c magenta,green,gray,cyan \"npm:proto:watch\" \"npm:tiger:watch\" \"npm:tiger:stamp\" \"nest start --watch --entryFile main --preserveWatchOutput\"",
-    "tiger:link": "node ./scripts/link-tiger.mjs",
+    "tiger:build": "npm --prefix vendor/tiger ci && npm --prefix vendor/tiger run build -w packages/poodle -w packages/rsat -w packages/gibbon -w packages/bullshcript -w packages/datamine",
     "tiger:watch": "npm --prefix vendor/tiger run dev",
     "tiger:stamp": "node ./scripts/tiger-stamp.mjs",
     "start:prod": "node dist/main",
     "test": "vitest run",
-    "validate": "npm run check && npm run test && npm run typecheck",
+    "validate": "npm run check && vitest run --mode validate && npm run typecheck",
     "prepare": "husky"
   },
   "dependencies": {
@@ -72,7 +72,6 @@
     "concurrently": "^9.2.4",
     "esbuild": "^0.28.2",
     "husky": "^9.1.7",
-    "lint-staged": "^17.3.0",
     "postject": "^1.0.0-alpha.6",
     "prisma": "^6.7.0",
     "rimraf": "^3.0.2",
@@ -82,8 +81,5 @@
   },
   "overrides": {
     "express": "5.1.0"
-  },
-  "lint-staged": {
-    "*.{ts,js,mjs,cjs,json,jsonc}": "ultracite check"
   }
 }

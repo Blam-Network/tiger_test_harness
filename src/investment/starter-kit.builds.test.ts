@@ -60,7 +60,7 @@ describeEachPackages(
           kit?.emblemName(CLASS_NAMES[classIndex])
         );
       }
-    }, 60_000);
+    });
 
     it("gives the stored kit an emblem on the next read", async () => {
       const { equipSlotIds } = await import("../content/inventory");
@@ -80,7 +80,7 @@ describeEachPackages(
         }));
       const { creates } = planLoadoutRepair(rows, 0);
       expect(creates.map((seed) => seed.defIndex)).toEqual([kit?.emblemDef]);
-    }, 60_000);
+    });
   },
   Object.keys(KITS) as e_build[]
 );

@@ -8,7 +8,7 @@ import {
 import { incidentNames } from "../../../incident-names";
 
 // Opening the package set takes seconds on a loaded machine.
-describeWithPackages("activity table", { timeout: 30_000 }, () => {
+describeWithPackages("activity table", () => {
   it("names activities by their definitions", () => {
     expect(activityName(0)).toBe("city_tower_default1");
     expect(activityName(16)).toBe("venus_portal_1");

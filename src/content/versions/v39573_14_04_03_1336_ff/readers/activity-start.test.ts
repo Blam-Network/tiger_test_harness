@@ -70,9 +70,7 @@ describe.skipIf(!hasPackages(BUILD))("PS4 ff activity starts", () => {
     e_build.v39573_14_04_03_1336_ff,
     "the scripts on the packages",
     () => {
-      it("starts each activity the packages hold a scenario for", {
-        timeout: 120_000,
-      }, async () => {
+      it("starts each activity the packages hold a scenario for", async () => {
         const { contentBuild } = await import("../..");
         const { activityStart } = await import("../../../start-config");
         const { readers } = contentBuild();

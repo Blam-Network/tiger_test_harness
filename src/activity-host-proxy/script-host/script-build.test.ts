@@ -37,7 +37,7 @@ const SMALL = "es/pvp_anomaly/pvp_anomaly.es";
 
 // the real folder compiles and writes in a couple of seconds next to the
 // rest of the suite
-describe("the script build", { timeout: 30_000 }, () => {
+describe("the script build", () => {
   const root = mkdtempSync(join(tmpdir(), "script-build-"));
   const fullDir = join(root, "scripts");
   const sourceDir = join(root, "small");

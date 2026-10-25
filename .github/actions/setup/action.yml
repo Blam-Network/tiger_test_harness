@@ -12,14 +12,11 @@ runs:
           package-lock.json
           vendor/tiger/package-lock.json
 
-    # Only the packages this repo links (package.json): the tiger workspaces
-    # in dependency order, without the debugger and viewer apps.
+    # Only the tiger packages this repo links, without the debugger and viewer
+    # apps (package.json tiger:build).
     - name: Build tiger
       shell: bash
-      working-directory: vendor/tiger
-      run: |
-        npm ci
-        npm run build -w packages/poodle -w packages/rsat -w packages/gibbon -w packages/bullshcript -w packages/datamine
+      run: npm run tiger:build
 
     - name: Install
       shell: bash

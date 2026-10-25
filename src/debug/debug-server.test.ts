@@ -13,7 +13,7 @@ describe("debug server /debug/dap", () => {
     const { createDebugServer } = await import("./debug-server");
     server = await createDebugServer();
     // the first import of the server pulls bullshcript's whole build in
-  }, 60_000);
+  });
 
   afterAll(() => {
     server?.close();

@@ -22,5 +22,15 @@ const testPath = expect.getState().testPath?.replaceAll("\\", "/");
 process.env.TIGER_GAME_BUILD =
   folderOf(testPath) ?? e_build.v41375_14_07_03_1501_live;
 const build = process.env.TIGER_GAME_BUILD as e_build;
-loadDotenv({ path: path.join(process.cwd(), ".env.test"), override: false });
+// `vitest --mode validate` (npm run validate, CI, the pre-commit hook) reads no
+// local packages, so it passes the same on a fresh clone.
+if (process.env.TIGER_TEST_PACKAGES === "off") {
+  for (const key of Object.keys(process.env)) {
+    if (key.startsWith("TIGER_TEST_PACKAGES_")) {
+      delete process.env[key];
+    }
+  }
+} else {
+  loadDotenv({ path: path.join(process.cwd(), ".env.test"), override: false });
+}
 process.env.TIGER_PACKAGES_DIR = testPackagesDir(buildFolder(build)) ?? "";

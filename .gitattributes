@@ -1,0 +1,3 @@
+# Line endings are LF in the repo and on checkout, whatever core.autocrlf says:
+# biome checks for LF.
+* text=auto eol=lf

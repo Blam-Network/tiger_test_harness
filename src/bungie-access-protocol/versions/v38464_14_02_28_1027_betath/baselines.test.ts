@@ -71,8 +71,7 @@ describeBuild(BUILD, "38464 family baselines", () => {
       for (const body of bodies) {
         expect(body.length).toBeGreaterThan(0);
       }
-    },
-    60_000
+    }
   );
 
   // A new character is level 6 on every screen: the level row at its XP,
@@ -113,7 +112,6 @@ describeBuild(BUILD, "38464 family baselines", () => {
       expect(self.unknown16?.unknown3).toBeUndefined();
       expect(inspectionCharacter(character).unknown10?.unknown0).toBe(6);
       expect(selectCharacterCharacter(character).unknown4?.unknown0).toBe(6);
-    },
-    60_000
+    }
   );
 });

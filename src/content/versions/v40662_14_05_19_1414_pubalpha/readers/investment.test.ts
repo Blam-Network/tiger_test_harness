@@ -12,7 +12,6 @@ const pubalphaBuild = () => contentBuildForTest(BUILD);
 // Opening the package set takes seconds on a loaded machine.
 describe.skipIf(!hasPackages(BUILD))(
   "PS4 Alpha Trial investment tables",
-  { timeout: 60_000 },
   () => {
     const readers = () => pubalphaBuild().readers;
 

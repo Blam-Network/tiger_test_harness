@@ -9,7 +9,7 @@ import { activityBinder, activityBundles, bundleWorlds } from "../../..";
 import { activityStart } from "../../../start-config";
 
 // Opening the package set takes seconds on a loaded machine.
-describeWithPackages("package reader", { timeout: 30_000 }, () => {
+describeWithPackages("package reader", () => {
   it("reads a table with the authored start", () => {
     const table = activityBundles("act_cosmo_m4_dome_c");
     expect(table?.scenario.initialBubble).toBe(6);
@@ -149,46 +149,42 @@ const STARTS: Record<
   },
 };
 
-describeWithPackages(
-  "activity start from the scripts",
-  { timeout: 30_000 },
-  () => {
-    it.each(Object.entries(STARTS))("starts %s", (name, expected) => {
-      const table = activityBundles(name);
-      expect(table?.destination).toBe(expected.destination);
-      expect(table?.scenario.initialBubble).toBe(expected.bubble);
-      expect(table?.scenario.initialState).toBe(expected.state);
-      expect(table?.scenario.spawnTransition).toBe(expected.spawn);
-      expect(table?.phases?.map((phase) => phase.bubble)).toEqual(
-        expected.phases
-      );
-    });
+describeWithPackages("activity start from the scripts", () => {
+  it.each(Object.entries(STARTS))("starts %s", (name, expected) => {
+    const table = activityBundles(name);
+    expect(table?.destination).toBe(expected.destination);
+    expect(table?.scenario.initialBubble).toBe(expected.bubble);
+    expect(table?.scenario.initialState).toBe(expected.state);
+    expect(table?.scenario.spawnTransition).toBe(expected.spawn);
+    expect(table?.phases?.map((phase) => phase.bubble)).toEqual(
+      expected.phases
+    );
+  });
 
-    it("names each phase by the row its hash is", () => {
-      const phases = activityBundles("act_cosmo_m0_highway")?.phases ?? [];
-      expect(phases[0]?.name).toBe("cosmo_m0_phase00_highway_intro");
-      expect(phases.map((phase) => phase.hash)).toEqual(
-        phases.map((phase) => fnv1(phase.name))
-      );
-    });
+  it("names each phase by the row its hash is", () => {
+    const phases = activityBundles("act_cosmo_m0_highway")?.phases ?? [];
+    expect(phases[0]?.name).toBe("cosmo_m0_phase00_highway_intro");
+    expect(phases.map((phase) => phase.hash)).toEqual(
+      phases.map((phase) => fnv1(phase.name))
+    );
+  });
 
-    it("carries the region spawn transitions and time of day", () => {
-      expect(
-        activityStart("act_cosmo_m0_highway")?.regionSpawnTransitions
-      ).toEqual({
-        24: 0x68_93_54_72,
-        96: 0x10_ff_4a_98,
-        104: 0x57_36_5a_42,
-        105: k_empty_name_hash,
-        112: 0xea_ec_23_35,
-        113: 0xea_ec_23_35,
-      });
-      expect(activityStart("act_cosmo_m0_highway")?.timeOfDay).toBe(0.77);
-      expect(activityStart("cine_reveal")?.timeOfDay).toBeUndefined();
-      expect(activityStart("cine_reveal")?.regionSpawnTransitions).toEqual({});
+  it("carries the region spawn transitions and time of day", () => {
+    expect(
+      activityStart("act_cosmo_m0_highway")?.regionSpawnTransitions
+    ).toEqual({
+      24: 0x68_93_54_72,
+      96: 0x10_ff_4a_98,
+      104: 0x57_36_5a_42,
+      105: k_empty_name_hash,
+      112: 0xea_ec_23_35,
+      113: 0xea_ec_23_35,
     });
-  }
-);
+    expect(activityStart("act_cosmo_m0_highway")?.timeOfDay).toBe(0.77);
+    expect(activityStart("cine_reveal")?.timeOfDay).toBeUndefined();
+    expect(activityStart("cine_reveal")?.regionSpawnTransitions).toEqual({});
+  });
+});
 
 // The binder is the bundle with the lifetime and the players, not the first
 // with a Lifetime row: cosmo_patrols_1's patrol bundle has one of its own and

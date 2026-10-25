@@ -234,7 +234,7 @@ describeBuild(
         for (const [name, order] of Object.entries(ORDERS)) {
           crossings[name] = await run(order);
         }
-      }, 60_000);
+      });
 
       afterAll(() => events_dispose());
 
