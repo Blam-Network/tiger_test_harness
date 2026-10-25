@@ -1,78 +1,38 @@
+export {
+  packBubbleStateHandle,
+  unpackBubbleStateHandle,
+} from "./bubble-handle";
+export { slotBitmap } from "./claims";
+export {
+  parseClientAuthoritativeData,
+  parseStateRefresh,
+} from "./client-reports";
+export {
+  buildGlobalActivityStateRsat,
+  buildWorldGlobalsStateRsat,
+} from "./global-activity-state";
 export type {
-  GlobalActivityStateFields,
-  ReplicateMembershipFields,
+  HostHardWipe,
+  PendingRegion,
+  ReplicateMember,
+  Teleport,
+} from "./membership";
+export { buildReplicateMembershipRsat } from "./membership";
+export { parseRequestScriptUpdates } from "./script";
+export type {
+  FinishedBits,
   SensorAuthSenseEntry,
   SensorAuthUpdateFields,
   SensorClientRefFields,
-} from "./mocks";
+} from "./sensor-auth-fields";
 export {
-  buildGlobalActivityStateRsat,
-  buildReplicateMembershipRsat,
+  type ApplyScope,
+  buildApplySenseEntries,
+  buildBinderSenseEntries,
+  buildSensorAuthPromoteRsat,
   buildSensorAuthTickRsat,
   buildSensorAuthUpdateRsat,
-  buildTowerApplySenseEntries,
-  buildTowerBinderSenseEntries,
-  buildTowerLeftoverSenseEntries,
-  buildTowerSensorAuthRsat,
-  buildWorldGlobalsStateRsat,
-  GAS_SECONDS_PER_DAY,
-  GAS_TIME_OF_DAY_FRACTION,
-  packBubbleStateHandle,
-  parseGlobalActivityState,
-  parseReplicateMembership,
-  parseStateRefreshSlice,
   playerKeyFromCharacter,
-  unpackBubbleStateHandle,
-} from "./mocks";
-export {
-  MEMBERSHIP_SLOT_COUNT,
-  MembershipSlot,
-  MembershipSlots,
-  PAH_REGION_COUNT,
-  PahRegion,
-  PahRegions,
-  ReplicateMembership,
-} from "./schemas/membership";
-export {
-  ActivityName,
-  BUBBLE_SLOTS,
-  BubbleStates,
-  GlobalActivityState,
-  WorldGlobalsState,
-  WorldHandles,
-  WorldOptions,
-} from "./schemas/messages";
-export {
-  ActivityOptions,
-  ActorAuth,
-  ActorSense,
-  CinematicAuth,
-  FireteamAuth,
-  HardWipeGlobalsAuth,
-  HealthAuth,
-  HealthSense,
-  LifetimeAuth,
-  LootAuth,
-  ObjectAuth,
-  ObjectFilterAuth,
-  ObjectiveAuth,
-  ObjectiveSense,
-  ObjectSense,
-  PlayerAuth,
-  PlayerMonitorAuth,
-  PlayerMonitorSense,
-  PlayerObjectiveAuth,
-  PlayerSense,
-  PlayerSenseNested,
-  PlayerTriggerAuth,
-  SafeZoneAuth,
-  SafeZoneSense,
-  ScoreboardAuth,
-  SensorClientRef,
-  SequenceAuth,
-  SquadAuth,
-  SquadSense,
-  TimerAuth,
-  Unknown24Auth,
-  Unknown24Sense,
-} from "./schemas/sensor";
+  playerKeyFromIdentity,
+  withoutSenseRows,
+} from "./sensor-auth-fields";

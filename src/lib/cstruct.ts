@@ -1,9 +1,10 @@
 import { CFieldType, c } from "@craftycodie/cstruct";
 
-/** Dotted IPv4 as a 4-byte integer. Reserved bytes use `{ padAfter: 2 }`. */
-export class CstructIPv4<
-  const O extends c.FieldOptions = {},
-> extends CFieldType<string, O> {
+// Dotted IPv4 as a 4-byte integer. Reserved bytes use `{ padAfter: 2 }`.
+class CstructIPv4<const O extends c.FieldOptions = {}> extends CFieldType<
+  string,
+  O
+> {
   getSize(): number {
     return 4;
   }

@@ -1,0 +1,15 @@
+syntax = "proto2";
+
+package destiny.v38464.bap;
+
+// client_to_bap_client_config_request (BAP 0x12, 0x9EB380) is not protobuf:
+// the body is one u64, big-endian.
+//
+// client_to_bap_client_config_response (BAP 0x13, 0x9EB440) uses nanopb
+// 0x2441C40, the same table as signon response field 4.
+message ClientConfigResponse {
+  required uint64 cookie = 1;
+  required uint32 social_matchmaking_id = 2;
+  // EngineConfiguration (signon.proto), a callback field decoded in place
+  optional bytes engine_configuration = 3;
+}

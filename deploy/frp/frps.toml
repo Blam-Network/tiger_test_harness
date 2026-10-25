@@ -1,0 +1,31 @@
+# frp server — runs ON THE VPS.
+#
+# Every port the game dials is hardcoded in the client, so the tunnel has to
+# publish those exact numbers. frp can, because you own both ends; a SaaS
+# tunnel that assigns you a random port cannot.
+#
+#   ./frps -c frps.toml
+#
+# Open on the VPS firewall: 7000 (control) plus every port in frpc.toml.
+
+bindPort = 7000
+
+# Shared secret between frps and frpc. Change it; anything that reaches 7000
+# with this token can publish ports on your VPS.
+auth.method = "token"
+auth.token = "CHANGE-ME"
+
+# Refuse to publish anything except the game's own ports, so a leaked token
+# cannot turn the VPS into an open relay.
+allowPorts = [
+  { start = 1011, end = 1011 },
+  { start = 1020, end = 1020 },
+  { start = 32000, end = 32001 },
+  { start = 32004, end = 32005 },
+  { start = 32008, end = 32009 },
+  { start = 32556, end = 32556 },
+  { start = 37000, end = 37001 },
+]
+
+log.to = "./frps.log"
+log.level = "info"

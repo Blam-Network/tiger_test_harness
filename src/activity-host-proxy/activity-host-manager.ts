@@ -1,19 +1,32 @@
+import { event_message, event_warning } from "@blamnetwork/datamine";
 import { c } from "@craftycodie/cstruct";
-import { Inject, Injectable } from "@nestjs/common";
-import type { RawBapMessage } from "../bungie-access-protocol/codec";
-import type ILogger from "../ILogger";
-import { ILoggerSymbol } from "../ILogger";
-import { type ActivityHostKind, ActivityHostService } from "./activity-host";
-import { formatActivityHostTag } from "./config";
+import { Injectable } from "@nestjs/common";
+import { activityPlaylist } from "../content/activities";
+import type { RawBapMessage } from "../lib/bap-wire/codec";
 import {
+  type PlayerSession,
+  playerByAccount,
+  playerByCharacter,
+  players,
+} from "../players/registry";
+import { formatActivityHostTag } from "./config";
+import { hexPreview } from "./hex-preview";
+import type { AhClientIdentity } from "./join";
+import {
+  anonymousHosts,
+  type BoundHosts,
+  type PlayerHosts,
+} from "./player-hosts";
+import {
+  findU64BitOffset,
   formatStartRequest,
   type ParsedStartRequest,
   parseStartRequest,
 } from "./start-request";
 
-// activity host manager startup request ?
+// Activity host manager startup request type.
 export const ACTIVITY_HOST_MANAGER_START_TYPE = 3;
-// TODO: what is this
+// Response type, true name unknown.
 export const ACTIVITY_HOST_MANAGER_RESPONSE_TYPE = 2;
 
 const ActivityHostManagerResponse = c.struct({
@@ -49,88 +62,160 @@ export function buildActivityHostManagerResponse(
   );
 }
 
+// Called once per manager request with the parsed start request (undefined
+// for other request types or an unparsed start); returns the hosts and
+// host kind the reply names.
+type BindHosts = (start: ParsedStartRequest | undefined) => BoundHosts;
+
 @Injectable()
 export class ActivityHostManager {
-  readonly fah = new ActivityHostService();
-  gah: ActivityHostService | undefined;
-  private fahBound = false;
-  private startRequest: ParsedStartRequest | undefined;
-
-  constructor(@Inject(ILoggerSymbol) private readonly logger: ILogger) {}
-
-  bindSession(): ActivityHostKind {
-    if (!this.fahBound) {
-      this.fahBound = true;
-      return "FAH";
+  // The start request stream is one 808044EB record: a fireteam roster
+  // (account + character soid per member) and the requesting machine's id.
+  // The requester is the roster member whose machine matches the trailing
+  // field (first member if that machine is absent from the roster, which the
+  // capture never showed); look it up by character soid then account soid.
+  // If the stream doesn't decode, fall back to the soid bit-scan and finally
+  // to the shared anonymous hosts.
+  hostsForStartRequest(parsed: ParsedStartRequest): PlayerHosts {
+    if (parsed.fireteam) {
+      return this.hostsFromFireteam(parsed.fireteam, parsed.requesterMachine);
     }
-    this.ensureGah();
-    return "GAH";
+    return this.hostsFromSoidScan(parsed.stream);
   }
 
-  unbindSession(kind: ActivityHostKind): void {
-    if (kind === "FAH") {
-      this.fahBound = false;
+  private hostsFromFireteam(
+    fireteam: AhClientIdentity[],
+    requesterMachine: Buffer | undefined
+  ): PlayerHosts {
+    const requester =
+      (requesterMachine &&
+        fireteam.find((m) => m.machine.equals(requesterMachine))) ||
+      fireteam[0];
+    if (!requester) {
+      event_warning(
+        "activities:host:manager: start req fireteam is empty, using anonymous hosts"
+      );
+      return anonymousHosts;
     }
+    const player =
+      playerByCharacter(requester.character) ??
+      playerByAccount(requester.account);
+    event_message(
+      "activities:host:manager: start req player account=0x%I64x character=0x%I64x machine=%s fireteam=%d",
+      requester.account,
+      requester.character,
+      requester.machine.toString("hex"),
+      fireteam.length
+    );
+    if (!player) {
+      event_warning(
+        "activities:host:manager: start req matches no registered player (%d registered), using anonymous hosts",
+        players().length
+      );
+      return anonymousHosts;
+    }
+    return player.hosts;
   }
 
-  ensureGah(): ActivityHostService {
-    this.gah ??= new ActivityHostService();
-    return this.gah;
+  // Pre-decode fallback: scan every registered player's soids as a
+  // big-endian u64 at any bit offset in the stream. Soids are
+  // type<<32|row with tiny rows, so a bit-shifted window over one player's
+  // soids can spell another's (0x1_00000001 << 1 is 0x2_00000002): a player
+  // found by both soids beats one found by either, then the earliest offset
+  // wins (the real soids lead, false positives trail), then the newest
+  // registration. No match falls back to the shared anonymous hosts.
+  private hostsFromSoidScan(stream: Buffer): PlayerHosts {
+    let best: { player: PlayerSession; score: number; at: number } | undefined;
+    for (const player of players()) {
+      const accountAt = findU64BitOffset(stream, player.accountSoid);
+      const characterAt =
+        player.characterSoid === undefined
+          ? -1
+          : findU64BitOffset(stream, player.characterSoid);
+      const score = (accountAt >= 0 ? 1 : 0) + (characterAt >= 0 ? 1 : 0);
+      const at = accountAt >= 0 ? accountAt : characterAt;
+      if (
+        score > 0 &&
+        (!best || score > best.score || (score === best.score && at <= best.at))
+      ) {
+        best = { player, score, at };
+      }
+    }
+    if (!best) {
+      event_warning(
+        "activities:host:manager: start req matches no registered player (%d registered), using anonymous hosts",
+        players().length
+      );
+      return anonymousHosts;
+    }
+    const { player, score, at } = best;
+    event_message(
+      "activities:host:manager: start req player account=0x%I64x character=0x%I64x (%s, stream bit %d)",
+      player.accountSoid,
+      player.characterSoid ?? 0n,
+      score === 2 ? "both soids" : "one soid",
+      at
+    );
+    return player.hosts;
   }
 
-  host(kind: ActivityHostKind): ActivityHostService {
-    return kind === "GAH" ? this.ensureGah() : this.fah;
-  }
-
-  getStartRequest(): ParsedStartRequest | undefined {
-    return this.startRequest;
-  }
-
-  handle(message: RawBapMessage, kind: ActivityHostKind): Buffer | null {
+  handle(message: RawBapMessage, bind: BindHosts): Buffer | null {
     try {
       const req = parseActivityHostManagerRequest(message.body);
       if (!req) {
-        this.logger.warn(
-          `AH manager req absorbed (short body ${message.body.length}B)`
+        event_warning(
+          "activities:host:manager: req absorbed (short body %dB)",
+          message.body.length
         );
         return null;
       }
 
+      let start: ParsedStartRequest | undefined;
       if (req.type === ACTIVITY_HOST_MANAGER_START_TYPE) {
         const parsed = parseStartRequest(req.payload);
-        this.startRequest = parsed ?? undefined;
         if (parsed) {
-          this.logger.log(
-            `AH manager start req (${req.payload.length}B ` +
-              `${formatStartRequest(parsed)})`
+          // A playlist id resolves to its first listed activity.
+          const resolved =
+            activityPlaylist(parsed.activityId)?.[0] ?? parsed.activityId;
+          event_message(
+            "activities:host:manager: start req (%dB %s%s)",
+            req.payload.length,
+            formatStartRequest(parsed),
+            resolved === parsed.activityId
+              ? ""
+              : ` playlist -> activity ${resolved}`
           );
+          // Downstream (scenario, GAS) wants the map, not the playlist.
+          start = { ...parsed, activityId: resolved };
         } else {
-          this.logger.warn(
-            `AH manager start req unparsed (${req.payload.length}B ` +
-              `head=${hexPreview(req.payload, 16)})`
+          event_warning(
+            "activities:host:manager: start req unparsed (%dB head=%s)",
+            req.payload.length,
+            hexPreview(req.payload, 16)
           );
         }
       }
 
-      const host = this.host(kind);
+      const { host, hosts, kind } = bind(start);
+      if (req.type === ACTIVITY_HOST_MANAGER_START_TYPE) {
+        hosts.setStartRequest(start);
+      }
       const body = buildActivityHostManagerResponse(host.id);
-      this.logger.log(
-        `AH manager rsp (seq ${message.sequence.toString(16)}, ` +
-          `reqType=${req.type} req=${message.body.length}B ` +
-          `head=${hexPreview(req.payload, 16)} ` +
-          `ah=0x${host.id.toString(16)} ${kind}, body ${body.length}B)`
+      event_message(
+        "activities:host:manager: rsp (seq %x, reqType=%d req=%dB head=%s ah=0x%I64x %s, body %dB)",
+        message.sequence,
+        req.type,
+        message.body.length,
+        hexPreview(req.payload, 16),
+        host.id,
+        kind,
+        body.length
       );
       return body;
     } catch (err) {
       const m = err instanceof Error ? err.message : String(err);
-      this.logger.warn(`AH manager rsp FAILED, absorbed: ${m}`);
+      event_warning("activities:host:manager: rsp FAILED, absorbed: %s", m);
       return null;
     }
   }
-}
-
-function hexPreview(buf: Buffer, max = 64): string {
-  const slice = buf.subarray(0, max);
-  const hex = slice.toString("hex");
-  return buf.length > max ? `${hex}…(${buf.length}B)` : hex;
 }

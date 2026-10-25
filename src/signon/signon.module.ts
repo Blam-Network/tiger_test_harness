@@ -3,17 +3,25 @@ import {
   Module,
   type NestModule,
 } from "@nestjs/common";
-import { ILoggerSymbol } from "../ILogger";
-import { AppLoggerMiddleware } from "../middleware/AppLoggerMiddleware";
-import { ShutdownObserver } from "../ShutdownObserver";
-import { loggerWithPrefix } from "../utils/logger";
+import { AppLoggerMiddleware } from "../middleware/app-logger.middleware";
+import { ShutdownObserver } from "../shutdown-observer";
+import { ContentManifestController } from "./controllers/content-manifest.controller";
+import { DemonwareAuthController } from "./controllers/demonware-auth.controller";
+import { PsnOauthController } from "./controllers/psn-oauth.controller";
+import { PsnWebApiController } from "./controllers/psn-webapi.controller";
 import { SignonController } from "./controllers/signon.controller";
 import { SignonService } from "./services/signon.service";
 
 @Module({
-  controllers: [SignonController],
-  providers: [SignonService, loggerWithPrefix("SignOn"), ShutdownObserver],
-  exports: [SignonService, ILoggerSymbol, ShutdownObserver],
+  controllers: [
+    SignonController,
+    DemonwareAuthController,
+    ContentManifestController,
+    PsnOauthController,
+    PsnWebApiController,
+  ],
+  providers: [SignonService, ShutdownObserver],
+  exports: [SignonService, ShutdownObserver],
 })
 export class SignonModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

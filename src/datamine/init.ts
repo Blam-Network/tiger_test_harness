@@ -1,23 +1,25 @@
 import * as http from "node:http";
+import { event_message } from "@blamnetwork/datamine";
 import { NestFactory } from "@nestjs/core";
 import { ExpressAdapter } from "@nestjs/platform-express";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import express from "express";
-import { loadWebTigerEnv } from "../env";
-import type ILogger from "../ILogger";
-import { ILoggerSymbol } from "../ILogger";
-import { ShutdownObserver } from "../ShutdownObserver";
+import { activeBuild } from "../builds";
+import { loadWebTigerEnv, resolveHostname } from "../env";
+import { ShutdownObserver } from "../shutdown-observer";
+import { startEvents } from "../utils/events";
+import { nestLogger } from "../utils/logger";
 import { resolveDatamineHttpPorts } from "./constants";
 import { DatamineModule } from "./datamine.module";
-import { BnetPrismaToken } from "./prisma.service";
 
 export async function createDatamineServer(opts?: {
   ports?: number[];
   hostname?: string;
 }): Promise<http.Server[]> {
   loadWebTigerEnv();
+  await startEvents();
   const ports = opts?.ports ?? resolveDatamineHttpPorts();
-  const hostname = opts?.hostname ?? process.env.HOSTNAME;
+  const hostname = opts?.hostname ?? resolveHostname();
 
   const server = express();
   // Client PUTs binary datamine blobs; keep the body as raw bytes.
@@ -26,12 +28,12 @@ export async function createDatamineServer(opts?: {
   const app = await NestFactory.create(
     DatamineModule,
     new ExpressAdapter(server),
-    { bodyParser: false }
+    { bodyParser: false, logger: nestLogger }
   );
 
   const config = new DocumentBuilder()
     .setTitle("BNET - Tiger Datamine / Ticket Server")
-    .setVersion("36735.13.12.02.1953.alpha")
+    .setVersion(activeBuild())
     .build();
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup("api", app, document);
@@ -46,19 +48,7 @@ export async function createDatamineServer(opts?: {
     return httpServer;
   });
 
-  const logger = app.get<ILogger>(ILoggerSymbol);
-  let usingDatabase = false;
-  try {
-    usingDatabase = Boolean(app.get(BnetPrismaToken));
-  } catch {
-    usingDatabase = false;
-  }
-  logger.log(
-    usingDatabase
-      ? "BNET_DATABASE set — datamine uploads go to Postgres"
-      : "BNET_DATABASE unset — datamine uploads saved under ./datamine"
-  );
-  logger.log(`Listening on ports: ${ports.toString()}`);
+  event_message("datamine: Listening on ports: %s", ports.toString());
 
   return httpServers;
 }

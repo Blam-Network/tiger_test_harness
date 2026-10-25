@@ -1,0 +1,37 @@
+import { incidentNames } from "../../../content/incident-names";
+import { readBits } from "../../mission/read-bits";
+import type { IncidentWire } from "../activity-host-build";
+
+// The incident (80800B41) is its names (80805481: a 4-bit count, then up to
+// 15 10-bit indices into the incident registry, 8080547D) and the metadata
+// (808042AB: a 9-bit byte length, then the bytes). As 38464's and unlike
+// 40662's, the indices are 10 bits and there is no list of plain name hashes.
+const NAME_INDEX_BITS = 10;
+const METADATA_LENGTH_BITS = 9;
+
+export function createIncidentWire(): IncidentWire {
+  return {
+    readNames(payload) {
+      const totalBits = payload.length * 8;
+      const n = readBits(payload, 0, 4);
+      const metadataBit = 4 + NAME_INDEX_BITS * n + METADATA_LENGTH_BITS;
+      if (n < 1 || metadataBit > totalBits) {
+        return;
+      }
+      const names: number[] = [];
+      for (let i = 0; i < n; i++) {
+        const index = readBits(
+          payload,
+          4 + NAME_INDEX_BITS * i,
+          NAME_INDEX_BITS
+        );
+        const name = incidentNames()[index];
+        if (name === undefined) {
+          return;
+        }
+        names.push(name);
+      }
+      return { metadataBit, names };
+    },
+  };
+}

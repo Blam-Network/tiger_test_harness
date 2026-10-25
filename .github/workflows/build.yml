@@ -1,0 +1,163 @@
+name: Build
+
+# Every branch push builds the tiger_test_harness executable for Windows, Linux
+# and macOS and tags the commit with its Bungie-style build string,
+# {seq}.{yy}.{mm}.{dd}.{hhmm}.{branch} (see scripts/compute-build-string.mjs).
+# Pull requests build untracked in build_pr.yml. Release assets are attached by
+# release-assets.yml when a release is published on a build tag.
+#
+# An executable only runs on the platform that built it: windows-x64, linux-x64
+# and macos-arm64 (macos-14 is Apple silicon). The macOS one is ad-hoc signed,
+# not notarized. vendor/tiger is the tiger commit the submodule pins.
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # npm ci runs the prepare script; there are no hooks to install on a runner.
+  HUSKY: "0"
+
+jobs:
+  prepare:
+    name: Prepare build string
+    runs-on: ubuntu-latest
+    outputs:
+      build_string: ${{ steps.compute.outputs.build_string }}
+      build_info: ${{ steps.compute.outputs.build_info }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Compute build string
+        id: compute
+        shell: bash
+        env:
+          TIGER_TEST_HARNESS_BRANCH: ${{ github.ref_name }}
+          TIGER_TEST_HARNESS_SEQ: ${{ github.run_number }}
+        run: |
+          INFO=$(node scripts/compute-build-string.mjs)
+          BUILD_STRING=$(node -e "process.stdout.write(JSON.parse(process.argv[1]).buildString)" "$INFO")
+          echo "build_info=$INFO" >> "$GITHUB_OUTPUT"
+          echo "build_string=$BUILD_STRING" >> "$GITHUB_OUTPUT"
+          echo "Computed build string: $BUILD_STRING"
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            name: windows-x64
+            dir: win32-x64
+          - platform: ubuntu-latest
+            name: linux-x64
+            dir: linux-x64
+          - platform: macos-14
+            name: macos-arm64
+            dir: darwin-arm64
+    runs-on: ${{ matrix.platform }}
+    env:
+      TIGER_TEST_HARNESS_BUILD_INFO: ${{ needs.prepare.outputs.build_info }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: ./.github/actions/setup
+
+      # Prisma's query engine and the executable are built for this runner.
+      - name: Build the executable
+        run: npm run release
+
+      - name: Check the version
+        shell: bash
+        env:
+          BUILD_STRING: ${{ needs.prepare.outputs.build_string }}
+          DIR: release/${{ matrix.dir }}
+        run: |
+          set -euo pipefail
+          EXE="$DIR/tiger_test_harness"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            EXE="$EXE.exe"
+          fi
+          OUT=$("$EXE" --version)
+          echo "$OUT"
+          [[ "$OUT" == "tiger_test_harness $BUILD_STRING" ]]
+
+      # tar keeps the executable bit, which an artifact zip would drop.
+      - name: Name the executable after the build string
+        shell: bash
+        env:
+          BUILD_STRING: ${{ needs.prepare.outputs.build_string }}
+          DIR: release/${{ matrix.dir }}
+          PLATFORM: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          NAME="tiger_test_harness-${BUILD_STRING}-${PLATFORM}"
+          mkdir -p staging
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cp "$DIR/tiger_test_harness.exe" "staging/${NAME}.exe"
+          else
+            tar -czf "staging/${NAME}.tar.gz" -C "$DIR" tiger_test_harness
+          fi
+          ls -l staging
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tiger_test_harness-${{ matrix.name }}
+          path: staging/*
+          if-no-files-found: error
+
+  tag:
+    name: Tag build
+    needs: [prepare, build]
+    # Tag even when a build fails: seq is the run number and has to stay unique per commit.
+    if: always() && needs.prepare.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create build tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.build_string }}
+          SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$TAG" || "$TAG" == "untracked version" ]]; then
+            echo "Refusing to tag untracked build"
+            exit 1
+          fi
+
+          if gh api "repos/${REPO}/git/ref/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists"
+            exit 0
+          fi
+
+          TAG_OBJECT=$(gh api "repos/${REPO}/git/tags" \
+            -f tag="$TAG" \
+            -f message="Build $TAG" \
+            -f object="$SHA" \
+            -f type=commit)
+          TAG_SHA=$(printf '%s' "$TAG_OBJECT" | jq -r .sha)
+
+          gh api "repos/${REPO}/git/refs" \
+            -f ref="refs/tags/${TAG}" \
+            -f sha="$TAG_SHA"
+          echo "Tagged $SHA as $TAG"

@@ -1,0 +1,94 @@
+# frp client — runs ON THE MACHINE HOSTING web-tiger, next to the server.
+#
+#   ./frpc -c frpc.toml
+#
+# Each proxy publishes one local port on the VPS under the SAME number. The
+# client dials fixed ports, so remotePort must always equal localPort.
+
+serverAddr = "YOUR.VPS.IP.HERE"
+serverPort = 7000
+
+auth.method = "token"
+auth.token = "CHANGE-ME"
+
+# Demonware lobby (raw TCP)
+[[proxies]]
+name = "demonware-1011"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 1011
+remotePort = 1011
+
+[[proxies]]
+name = "demonware-1020"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 1020
+remotePort = 1020
+
+# Sign-on (HTTP, tunnelled as TCP so the port is preserved verbatim)
+[[proxies]]
+name = "signon-32000"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 32000
+remotePort = 32000
+
+[[proxies]]
+name = "signon-32001"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 32001
+remotePort = 32001
+
+[[proxies]]
+name = "signon-32004"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 32004
+remotePort = 32004
+
+[[proxies]]
+name = "signon-32005"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 32005
+remotePort = 32005
+
+[[proxies]]
+name = "signon-32008"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 32008
+remotePort = 32008
+
+[[proxies]]
+name = "signon-32009"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 32009
+remotePort = 32009
+
+# Datamine upload sink (HTTP)
+[[proxies]]
+name = "datamine-32556"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 32556
+remotePort = 32556
+
+# Bungie Access Protocol
+[[proxies]]
+name = "bap-37000"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 37000
+remotePort = 37000
+
+# Activity host proxy
+[[proxies]]
+name = "activity-host-37001"
+type = "tcp"
+localIP = "127.0.0.1"
+localPort = 37001
+remotePort = 37001

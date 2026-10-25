@@ -9,7 +9,7 @@ import {
 } from "./constants";
 import { writeI32LE } from "./util";
 
-export interface TypedRead<T> {
+interface TypedRead<T> {
   next: Buffer;
   value: T;
 }
@@ -45,7 +45,7 @@ export function readTypedU64(buf: Buffer): TypedRead<bigint> | null {
   };
 }
 
-export function writeTypedByte(value: number): Buffer {
+function writeTypedByte(value: number): Buffer {
   return Buffer.from([DTYPE_BYTE, value & 0xff]);
 }
 
@@ -70,7 +70,21 @@ export function writeTypedI64(value: bigint): Buffer {
   return b;
 }
 
-/** blob = type 0x13 | typed-uint32 length | raw bytes */
+// blob = type 0x13 | typed-uint32 length | raw bytes
+export function readTypedBlob(buf: Buffer): TypedRead<Buffer> | null {
+  if (buf.length < 6 || buf[0] !== DTYPE_BLOB) {
+    return null;
+  }
+  const size = readTypedU32(buf.subarray(1));
+  if (!size || size.next.length < size.value) {
+    return null;
+  }
+  return {
+    value: size.next.subarray(0, size.value),
+    next: size.next.subarray(size.value),
+  };
+}
+
 export function writeTypedBlob(data: Buffer): Buffer {
   return Buffer.concat([
     Buffer.from([DTYPE_BLOB]),
@@ -79,10 +93,8 @@ export function writeTypedBlob(data: Buffer): Buffer {
   ]);
 }
 
-/**
- * Wire: u32le size | u8 enc=0 | u8 type=4 | u8 dtype=10 | u64le connectionId
- * size counts everything after the size field.
- */
+// Wire: u32le size | u8 enc=0 | u8 type=4 | u8 dtype=10 | u64le connectionId
+// size counts everything after the size field.
 export function buildConnectionIdFrame(connectionId: bigint): Buffer {
   const body = Buffer.alloc(1 + 1 + 1 + 8);
   body[0] = 0;
@@ -92,11 +104,9 @@ export function buildConnectionIdFrame(connectionId: bigint): Buffer {
   return Buffer.concat([writeI32LE(body.length), body]);
 }
 
-/**
- * BD_LOBBY_SERVICE_TASK_REPLY (type 1), typed:
- *   u64 transactionId | u32 error=0 | u8 taskId
- *   [| u32 numResults | u32 numResults | objects...]
- */
+// BD_LOBBY_SERVICE_TASK_REPLY (type 1), typed:
+//   u64 transactionId | u32 error=0 | u8 taskId
+//   [| u32 numResults | u32 numResults | objects...]
 export function buildTaskReplyFrame(
   transactionId: bigint,
   taskId: number,

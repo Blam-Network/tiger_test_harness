@@ -1,0 +1,120 @@
+syntax = "proto2";
+
+package destiny.v41375.bap;
+
+// client_to_xetrov_notification (BAP 171). The client's decode slot for it
+// asserts, so the server never replies.
+//
+// Field 4 is a XetrovPackedEvent: type + payload bytes. The payload is a
+// XetrovClientEvent. Names come from the xetrov: debug logs.
+//
+// Kill/death/resurrect payloads omit fields the heartbeat always fills, so
+// ClientEvent fields are optional even when nanopb marked them required.
+
+message ClientToXetrovNotification {
+  required uint32 reserved1 = 1;
+  required uint32 reserved2 = 2;
+  optional uint64 reserved3 = 3;
+  required bytes event = 4;
+}
+
+// The client wraps its event in this (type + payload).
+message XetrovPackedEvent {
+  required uint32 type = 1;
+  required bytes payload = 2;
+}
+
+enum XetrovEventType {
+  HEARTBEAT = 0;
+  KILL = 1;
+  DEATH = 2;
+  RESURRECT = 3;
+  ABILITY = 4;
+}
+
+message XetrovClientEvent {
+  optional uint64 player_character_id = 2;
+  optional int32 character_power_level = 4;
+  optional uint64 server_time = 6;
+  optional uint64 event_date_seconds_1970 = 7;
+  optional uint64 player_account_id = 11;
+  optional uint32 destination_name_hash = 16;
+  optional string build = 17;
+  optional uint32 character_build_power = 28;
+  optional uint32 character_build_experience = 29;
+  optional int32 character_health = 31;
+  optional int32 character_loc_x = 37;
+  optional int32 character_loc_y = 38;
+  optional int32 character_loc_z = 39;
+  optional bool character_in_iron_sites = 41;
+  optional uint32 reserved55 = 55;
+  optional bool bubble_is_private = 56;
+  optional bool character_is_crouched = 57;
+  optional bool character_in_vehicle = 58;
+  optional bool reserved59 = 59;
+  optional uint32 character_build_id = 60;
+  optional uint32 character_talent_points = 61;
+  optional uint32 ability_super_hash = 62;
+  optional int32 ability_super_cooldown = 63;
+  optional uint32 ability_target_hash = 64;
+  optional int32 ability_target_cooldown = 65;
+  optional uint32 ability_melee_hash = 66;
+  optional int32 ability_melee_cooldown = 67;
+  optional uint32 ability_movement_hash = 68;
+  optional int32 ability_movement_cooldown = 69;
+  optional uint32 ability_jump_hash = 70;
+  optional int32 ability_jump_cooldown = 71;
+  optional int32 player_camera_direction_x = 73;
+  optional int32 player_camera_direction_y = 74;
+  optional int32 player_camera_direction_z = 75;
+  optional uint32 weapon0_id = 77;
+  optional uint32 weapon0_power = 78;
+  optional uint32 weapon0_experience = 79;
+  optional uint32 weapon0_talent_points = 80;
+  optional uint32 weapon0_ammo = 81;
+  optional uint32 weapon1_id = 82;
+  optional uint32 weapon1_power = 83;
+  optional uint32 weapon1_experience = 84;
+  optional uint32 weapon1_talent_points = 85;
+  optional uint32 weapon1_ammo = 86;
+  optional uint32 weapon2_id = 87;
+  optional uint32 weapon2_power = 88;
+  optional uint32 weapon2_experience = 89;
+  optional uint32 weapon2_talent_points = 90;
+  optional uint32 weapon2_ammo = 91;
+  optional int32 character_shield = 92;
+  optional bool character_jump_active = 93;
+  optional bool character_melee_active = 94;
+  optional bool character_super_active = 95;
+  optional bool character_targeted_active = 96;
+  optional uint32 reserved97 = 97;
+  optional bool reserved98 = 98;
+  optional uint32 activity_scenario_type = 99;
+  optional uint64 fireteam_id = 100;
+  optional uint32 activity_index = 101;
+  optional uint64 event_link_id = 102;
+  optional bool character_movement_active = 103;
+  optional uint32 reserved104 = 104;
+  optional bool player_in_nav_mode = 105;
+  optional bool player_in_game_ui = 106;
+  optional XetrovEventType event_type = 107;
+  optional uint32 weapon_held_type = 108;
+  optional uint32 damage_generic_type_hash = 109;
+  optional uint32 reserved110 = 110;
+  optional uint64 reserved111 = 111;
+  optional uint32 character_type_hash = 112;
+  optional uint32 bubble_enemy_count = 113;
+  optional uint32 bubble_player_count = 114;
+  optional uint64 activity_host_id_1 = 115;
+  optional uint32 session0_player_count_everywhere = 116;
+  optional uint32 session0_player_count_same_bubble = 117;
+  optional uint64 activity_host_id_0 = 118;
+  optional uint32 session1_player_count_everywhere = 119;
+  optional uint32 session1_player_count_same_bubble = 120;
+  optional uint32 reserved121 = 121;
+  optional uint32 reserved122 = 122;
+  optional uint32 character_total_experience = 123;
+  optional uint32 character_level = 124;
+  optional uint32 activity_phase_hash = 125;
+  optional uint32 activity_phase_index = 126;
+}

@@ -1,0 +1,85 @@
+name: Build (PR)
+
+# Pull requests build as "untracked version": no seq, no tag. The same
+# platforms as build.yml, with a -pr suffix on the artifacts.
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  # npm ci runs the prepare script; there are no hooks to install on a runner.
+  HUSKY: "0"
+  TIGER_TEST_HARNESS_UNTRACKED: "1"
+
+jobs:
+  build:
+    name: Build (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            name: windows-x64
+            dir: win32-x64
+          - platform: ubuntu-latest
+            name: linux-x64
+            dir: linux-x64
+          - platform: macos-14
+            name: macos-arm64
+            dir: darwin-arm64
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: ./.github/actions/setup
+
+      # release.mjs computes the untracked build info itself.
+      - name: Build the executable
+        run: npm run release
+
+      - name: Check the version
+        shell: bash
+        env:
+          DIR: release/${{ matrix.dir }}
+        run: |
+          set -euo pipefail
+          EXE="$DIR/tiger_test_harness"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            EXE="$EXE.exe"
+          fi
+          OUT=$("$EXE" --version)
+          echo "$OUT"
+          [[ "$OUT" == "tiger_test_harness untracked version" ]]
+
+      # tar keeps the executable bit, which an artifact zip would drop.
+      - name: Name the executable
+        shell: bash
+        env:
+          DIR: release/${{ matrix.dir }}
+          PLATFORM: ${{ matrix.name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          NAME="tiger_test_harness-pr${PR_NUMBER}-${HEAD_SHA:0:7}-${PLATFORM}"
+          mkdir -p staging
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cp "$DIR/tiger_test_harness.exe" "staging/${NAME}.exe"
+          else
+            tar -czf "staging/${NAME}.tar.gz" -C "$DIR" tiger_test_harness
+          fi
+          ls -l staging
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tiger_test_harness-${{ matrix.name }}-pr
+          path: staging/*
+          if-no-files-found: error
