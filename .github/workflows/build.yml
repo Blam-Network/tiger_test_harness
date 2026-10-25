@@ -3,8 +3,9 @@ name: Build
 # Every branch push builds the tiger_test_harness executable for Windows, Linux
 # and macOS and tags the commit with its Bungie-style build string,
 # {seq}.{yy}.{mm}.{dd}.{hhmm}.{branch} (see scripts/compute-build-string.mjs).
-# Pull requests build untracked in build_pr.yml. Release assets are attached by
-# release-assets.yml when a release is published on a build tag.
+# A push to main also publishes a release on that tag with the executables.
+# Pull requests build untracked in build_pr.yml; release-assets.yml attaches the
+# executables when a release of another branch's build is published by hand.
 #
 # An executable only runs on the platform that built it: windows-x64, linux-x64
 # and macos-arm64 (macos-14 is Apple silicon). The macOS one is ad-hoc signed,
@@ -161,3 +162,35 @@ jobs:
             -f ref="refs/tags/${TAG}" \
             -f sha="$TAG_SHA"
           echo "Tagged $SHA as $TAG"
+
+  release:
+    name: Release
+    needs: [prepare, build, tag]
+    # Only when every platform built and the tag exists.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tiger_test_harness-*
+          path: upload
+          merge-multiple: true
+
+      # A re-run replaces the assets of the release it already made.
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ needs.prepare.outputs.build_string }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ls -lh upload
+          if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
+            gh release upload "$TAG" upload/* --repo "$REPO" --clobber
+          else
+            gh release create "$TAG" upload/* --repo "$REPO" \
+              --title "$TAG" --generate-notes --verify-tag
+          fi

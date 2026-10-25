@@ -116,8 +116,8 @@ Builds are numbered like Bungie's: `{seq}.{yy}.{mm}.{dd}.{hhmm}.{branch}` (`0004
 
 GitHub Actions (`.github/workflows`):
 - `ci.yml`: lint, tests and typecheck (`npm run validate`) on pushes to main and pull requests.
-- `build.yml`: every branch push builds the executable on Windows, Linux and macOS (Apple silicon), attaches them to the run as `tiger_test_harness-<os>-<arch>` (tar.gz on Linux and macOS to keep the executable bit) and tags the commit with the build string.
+- `build.yml`: every branch push builds the executable on Windows, Linux and macOS (Apple silicon), attaches them to the run as `tiger_test_harness-<os>-<arch>` (tar.gz on Linux and macOS to keep the executable bit) and tags the commit with the build string. A push to main also publishes a GitHub release on that tag with the three executables.
 - `build_pr.yml`: the same for pull requests, untracked and untagged.
-- `release-assets.yml`: publishing a GitHub release on a build tag attaches that build's executables.
+- `release-assets.yml`: publishing a release by hand on another branch's build tag attaches that build's executables.
 
 They check out the `vendor/tiger` submodule at its pinned commit, so code here that needs newer tiger changes builds only after tiger is pushed and the pin bumped.

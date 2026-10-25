@@ -6,7 +6,8 @@ name: Release assets
 #   2. download the run's artifacts
 #   3. collect the executables of every platform
 #   4. upload them to the release
-# Other tags are ignored.
+# Other tags are ignored. Main's builds need none of this: build.yml publishes
+# their releases itself.
 on:
   release:
     types: [published]
