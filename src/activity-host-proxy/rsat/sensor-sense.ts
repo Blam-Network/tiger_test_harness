@@ -270,6 +270,27 @@ export function actorDropAcks(peek: SensePeek): ActorDropAck[] {
   });
 }
 
+interface ActorStanding {
+  bundle: number;
+  epoch?: number;
+  standing: boolean;
+  typeIndex: number;
+}
+
+// Whether an Actor row's combatant has an actor under the epoch it took.
+export function actorStandings(peek: SensePeek): ActorStanding[] {
+  const { sense } = activityHostBuild().sensor;
+  return peek.rows.flatMap((row) => {
+    const standing =
+      row.typeId === activityBundleItemType().Actor && row.sense
+        ? sense.actorStanding?.(row.sense)
+        : undefined;
+    return standing
+      ? [{ bundle: row.bundle, typeIndex: row.typeIndex, ...standing }]
+      : [];
+  });
+}
+
 interface ActorCommandScriptProgress {
   bundle: number;
   cookieRunning?: number;

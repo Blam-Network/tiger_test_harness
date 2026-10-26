@@ -238,6 +238,10 @@ export interface SenseWire {
   // The drop an Actor row has taken: its id (absent when unchanged) and
   // whether it is still under way.
   actorDrop?(sense: unknown): { dropId?: number; inProgress: boolean };
+  // The epoch an Actor row's combatant has taken (absent when unchanged) and
+  // whether the update carries what only a combatant with an actor writes. A
+  // build whose sense has none leaves this out.
+  actorStanding?(sense: unknown): { epoch?: number; standing: boolean };
   // The decoded sense of a row: its schema, found by id.
   decoders: ReadonlyMap<number, { decode(br: BitReader): unknown }>;
   // A Health row's current and maximum health, -1 for both when the bound

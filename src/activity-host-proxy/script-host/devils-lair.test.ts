@@ -331,7 +331,8 @@ describeWithPackages("the Walker's death ends the blast", () => {
     };
     tick(4);
     host.noteTriggerFired(ROOT, PT_WALKER);
-    tick(2);
+    // the Walker is placed once its skiff stands, a tick after the skiff
+    tick(3);
     expect(said(/sq_tank t1#3 bodies=1/)).toBe(true);
     // The client's first sense of the squad and its member: no deaths, the
     // member bound.

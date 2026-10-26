@@ -358,6 +358,15 @@ export class ScriptHost {
     this.runtime.reportActorDropAck({ bundle, typeIndex }, dropId, inProgress);
   }
 
+  noteActorStanding(
+    bundle: number,
+    typeIndex: number,
+    epoch: number | undefined,
+    standing: boolean
+  ): void {
+    this.runtime.reportActorStanding({ bundle, typeIndex }, epoch, standing);
+  }
+
   noteActorCommandScriptSense(
     bundle: number,
     typeIndex: number,

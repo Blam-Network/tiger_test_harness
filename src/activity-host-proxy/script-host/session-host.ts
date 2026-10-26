@@ -47,6 +47,7 @@ import {
   actorBoundFlags,
   actorCommandScriptProgress,
   actorDropAcks,
+  actorStandings,
   healthFractions,
   interactableUses,
   objectAliveFlags,
@@ -298,6 +299,12 @@ export class SessionScriptHost {
         ...progress
       } of actorCommandScriptProgress(peek)) {
         this.host.noteActorCommandScriptSense(bundle, typeIndex, progress);
+      }
+      // A placement the client held back is placed again until it stands.
+      for (const { bundle, typeIndex, epoch, standing } of actorStandings(
+        peek
+      )) {
+        this.host.noteActorStanding(bundle, typeIndex, epoch, standing);
       }
       for (const { bundle, typeIndex, alive } of objectAliveFlags(peek)) {
         this.host.noteObjectAlive(bundle, typeIndex, alive);

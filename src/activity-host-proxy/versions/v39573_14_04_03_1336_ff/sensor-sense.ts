@@ -56,6 +56,20 @@ export function createSenseWire(ah: AhSchemas): SenseWire {
       return { unknown9: actor.unknown9, unknown10: actor.unknown10 };
     },
 
+    // ActorSense [0] echoes the auth's epoch; [1], [7] and [8] are written only
+    // while the combatant has an actor (ff sub_1631FC0), so a placement the
+    // client deferred takes the auth ([10]) without them.
+    actorStanding: (sense) => {
+      const actor = sense as Decoded<"ActorSense">;
+      return {
+        epoch: actor.unknown0,
+        standing:
+          actor.unknown1 !== undefined ||
+          actor.unknown7 !== undefined ||
+          actor.unknown8 !== undefined,
+      };
+    },
+
     // ActorSense [3] (8080038A), as the alpha's: the PC the command script
     // has reached, the cookie it runs and the runner's heartbeat, each sent
     // only when it moves (2.3.1 capture, cosmo_portal_1's Walker skiff: cookie
