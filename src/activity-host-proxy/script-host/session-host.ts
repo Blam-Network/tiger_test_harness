@@ -590,6 +590,7 @@ export class SessionScriptHost {
     const character = this.context.joinIdentity()?.character.toString(16);
     this.noteKill({
       assists: [],
+      incidentNames: incident.names,
       killer: { characterKey: character },
       victim: {},
     });
